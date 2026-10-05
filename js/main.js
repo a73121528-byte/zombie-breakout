@@ -1601,9 +1601,9 @@ function applyQuality(setting) {
   moon.castShadow = shadowOn;
   if (shadowOn) { moon.shadow.mapSize.set(Q.shadow, Q.shadow); if (moon.shadow.map) { moon.shadow.map.dispose(); moon.shadow.map = null; } }
   hero.root.traverse(o => { if (o.isMesh) o.castShadow = shadowOn && o.userData.cast !== false; });
-  const det = key !== 'low'; setCharDetail(det); applyCharBump([hero.mats.coat, hero.mats.coatSide], det);
-  for (const z of zombies) applyCharBump(z.rig.mats, det);
-  W.setQuality(key);
+  const det = key !== 'low', cb = key === 'high'; setCharDetail(cb); applyCharBump([hero.mats.coat, hero.mats.coatSide], cb);
+  for (const z of zombies) applyCharBump(z.rig.mats, cb);
+  W.setQuality(key); rimLight.visible = det;
   for (const z of zombies) applyShadowFlags(z.rig.root);
   fireLights.forEach((l, i) => l.visible = i < Q.fires);
   lampLights.forEach((l, i) => l.visible = i < Q.lamps);

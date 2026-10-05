@@ -318,7 +318,7 @@ export function buildWorld(scene) {
 
   // ---------------------------------------------------------------- ground
   const groundL = L({ map: asphalt, color: 0x9a96a0 });
-  const groundP = new THREE.MeshPhongMaterial({ map: asphalt, color: 0x8e8a96, specularMap: wetTex, specular: 0x8a8aa0, shininess: 55, envMap: envCube, combine: THREE.MixOperation, reflectivity: 0.32, bumpMap: asphalt, bumpScale: 0.8 });
+  const groundP = new THREE.MeshPhongMaterial({ map: asphalt, color: 0x8e8a96, specularMap: wetTex, specular: 0x8a8aa0, shininess: 55, envMap: envCube, combine: THREE.MixOperation, reflectivity: 0.32, bumpMap: asphalt, bumpScale: 0.8 }); groundP.userData.bm = asphalt;
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 260), groundL);
   ground.rotation.x = -PI / 2; ground.receiveShadow = true; scene.add(ground);
 
@@ -932,10 +932,10 @@ export function buildWorld(scene) {
   };
   const setQuality = (key) => {
     const hi = key !== 'low';
-    ground.material = hi ? groundP : groundL;
-    for (const k in mats) { const m = mats[k], b = m.userData.bump; if (b) { const want = hi ? b[0] : null; if (m.bumpMap !== want) { m.bumpMap = want; m.bumpScale = b[1]; m.needsUpdate = true; } } }
+    ground.material = hi ? groundP : groundL; groundP.bumpMap = key === 'high' ? groundP.userData.bm : null; groundP.needsUpdate = true;
+    const bumpOn = key === 'high'; for (const k in mats) { const m = mats[k], b = m.userData.bump; if (b) { const want = bumpOn ? b[0] : null; if (m.bumpMap !== want) { m.bumpMap = want; m.bumpScale = b[1]; m.needsUpdate = true; } } }
     mats.puddle.envMap = hi ? envCube : null; mats.puddle.needsUpdate = true;
-    smokes.visible = hi; pools.visible = hi; rainOk = hi; for (const m of spills) m.userData.q = hi; rainN = key === 'high' ? RAIN_MAX : 700; setRain(rainOn);
+    smokes.visible = hi; pools.visible = hi; skyline.visible = hi; if (cones.material.map !== (hi ? coneTex : null)) { cones.material.map = hi ? coneTex : null; cones.material.needsUpdate = true; } rainOk = hi; for (const m of spills) m.userData.q = hi; rainN = key === 'high' ? RAIN_MAX : 700; setRain(rainOn);
   };
   // pavement height (sidewalk slabs are 0.1 m above the asphalt)
   const groundY = (x, z) => {
