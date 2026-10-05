@@ -12,11 +12,12 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20261005a">
 <script type="importmap">{"imports":{"three":"./lib/three.module.min.js","three/addons/":"./lib/"}}</script>
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="post" class="hidden"><div id="grain"></div><div id="postVig"></div></div>
 
 <!-- HUD -->
 <div id="hud" class="hidden">
@@ -37,17 +38,20 @@
     </div>
   </div>
   <div id="banner"></div>
+  <div id="toasts"></div>
   <div id="joyBase"><div id="joyKnob"></div></div>
   <div id="actions">
-    <button class="act" id="bAttack"><span>攻擊</span></button>
+    <button class="act" id="bAttack"><span id="bAttackTxt">攻擊</span></button>
+    <button class="act small" id="bWeapon"><span id="bWeaponTxt">武器</span></button>
     <button class="act small" id="bDodge"><span>閃避</span></button>
     <button class="act small" id="bSkill"><div class="cd" id="skillCd"></div><span>技能</span><em id="skillCdText"></em></button>
     <button class="act small" id="bLock"><span>鎖定</span></button>
   </div>
+  <div id="weaponHud" data-w="machete"><div class="wtop"><span id="wName">開山刀</span><span id="wParts"></span></div><div class="wammo"><b id="wMag">∞</b><span id="wRes"></span><em>換彈中…</em></div><div class="wrel"><i id="wRelFill"></i></div></div>
   <div id="floaters"></div>
   <div id="hpbars"></div>
   <div id="lockMark"></div>
-  <div id="keyHint">WASD 移動 · 拖曳滑鼠 轉視角 · J 攻擊 · K/空白 閃避 · L 技能 · ;/Q 鎖定 · Esc 暫停</div>
+  <div id="keyHint">WASD 移動 · 拖曳滑鼠 轉視角 · J 攻擊/射擊 · K/空白 閃避 · L 技能 · Q 鎖定 · E/1-4 換武器 · R 換彈 · Esc 暫停</div>
 </div>
 
 <!-- Main menu -->
@@ -59,8 +63,9 @@
     <div class="zhTitle">喪屍突圍</div>
     <button class="mbtn" id="btnStart">開始遊戲</button>
     <button class="mbtn" id="btnHelp">操作說明</button>
+    <button class="mbtn small" id="btnQuality">畫質：自動</button>
   </div>
-  <div class="ver">原型版 v0.1 · 星璃</div>
+  <div class="ver">原型版 v0.2 · 星璃 · 槍械與零件更新</div>
 </div>
 
 <!-- Help -->
@@ -76,15 +81,18 @@
         <p><b>閃避</b>：翻滾，短暫無敵（消耗體力）</p>
         <p><b>技能</b>：迴旋斬，範圍傷害（冷卻 8 秒）</p>
         <p><b>鎖定</b>：鎖定／解除最近的喪屍</p>
+        <p><b>武器</b>：切換 開山刀／手槍／霰彈槍／步槍</p>
+        <p>持槍時<b>攻擊</b>鍵射擊（按住連射，自動瞄準鎖定目標或前方最近喪屍）；點擊彈藥欄換彈</p>
       </div>
       <div>
         <h3>電腦鍵盤</h3>
         <p>WASD：移動　滑鼠拖曳／方向鍵：視角</p>
         <p>J：攻擊　K／空白鍵：閃避</p>
         <p>L：技能　; 或 Q：鎖定</p>
+        <p>E 或 1–4：切換武器　R：換彈</p>
         <p>Esc／P：暫停</p>
         <h3>提示</h3>
-        <p>撐過五波屍潮後，首領將會現身。<br>攻擊首領胸口<span style="color:#ffd84a">發光弱點</span>造成額外傷害。</p>
+        <p>第 1／2／3 波分別解鎖手槍／霰彈槍／步槍。<br>喪屍會掉落<span style="color:#ffc840">彈藥</span>與<span style="color:#5ad0ff">武器零件</span>（自動裝上，暫停選單可查看）。<br>裝甲屍正面有盾牌，繞背或使用穿甲彈。<br>撐過五波屍潮後，首領現身；攻擊胸口<span style="color:#ffd84a">發光弱點</span>造成額外傷害。</p>
       </div>
     </div>
     <button class="mbtn" id="btnHelpBack">返回</button>
@@ -93,11 +101,20 @@
 
 <!-- Pause -->
 <div id="pause" class="screen hidden dim">
-  <div class="panel narrow">
-    <h2>暫停</h2>
-    <button class="mbtn" id="btnResume">繼續遊戲</button>
-    <button class="mbtn" id="btnRestart">重新開始</button>
-    <button class="mbtn" id="btnToMenu">回到主選單</button>
+  <div class="panel pausePanel">
+    <div class="pcol pleft">
+      <h2>暫停</h2>
+      <button class="mbtn" id="btnResume">繼續遊戲</button>
+      <button class="mbtn" id="btnRestart">重新開始</button>
+      <button class="mbtn" id="btnToMenu">回到主選單</button>
+      <div class="qrow"><span>畫質</span><button data-q="auto">自動</button><button data-q="low">低</button><button data-q="mid">中</button><button data-q="high">高</button></div>
+      <div id="qInfo"></div>
+    </div>
+    <div class="pcol pright">
+      <h3>武器零件</h3>
+      <div id="upgradeList"></div>
+      <div id="partLegend"></div>
+    </div>
   </div>
 </div>
 
@@ -111,6 +128,7 @@
       <div><span>存活時間</span><b id="stTime">0:00</b></div>
       <div><span>擊殺數</span><b id="stKills">0</b></div>
       <div><span>波數</span><b id="stWave">1</b></div>
+      <div><span>零件</span><b id="stParts">0</b></div>
     </div>
     <button class="mbtn" id="btnEndRestart">重新開始</button>
     <button class="mbtn" id="btnEndMenu">回到主選單</button>
@@ -125,6 +143,6 @@
   <small>Please rotate to landscape</small>
 </div>
 
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=20261005a"></script>
 </body>
 </html>
