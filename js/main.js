@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261005b';
-import { buildWorld } from './world.js?v=20261005b';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex } from './characters.js?v=20261005b';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005b';
+import { Sfx } from './audio.js?v=20261005c';
+import { buildWorld } from './world.js?v=20261005c';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump } from './characters.js?v=20261005c';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005c';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -56,6 +56,7 @@ scene.add(new THREE.HemisphereLight(0x6e6890, 0x2c2226, 1.8));
 const moon = new THREE.DirectionalLight(0xa49ad0, 1.5); moon.position.set(-20, 30, 10); scene.add(moon); scene.add(moon.target);
 moon.shadow.camera.left = -13; moon.shadow.camera.right = 13; moon.shadow.camera.top = 13; moon.shadow.camera.bottom = -13;
 moon.shadow.camera.near = 1; moon.shadow.camera.far = 70; moon.shadow.bias = -0.0012; moon.shadow.normalBias = 0.03;
+const rimLight = new THREE.DirectionalLight(0x7a88d8, 1.3); scene.add(rimLight); scene.add(rimLight.target); // cool moonlight rim from behind the subjects
 const W = buildWorld(scene);
 const BOUND = W.bounds;
 const bossLight = new THREE.PointLight(0xffc040, 0, 10, 1.6); bossLight.position.set(0, -50, 0); scene.add(bossLight);
@@ -99,7 +100,7 @@ const heroBlob = new THREE.Mesh(blobGeo, blobMat); heroBlob.scale.setScalar(0.5)
 const P = {
   pos: new THREE.Vector3(), facing: Math.PI, hp: 100, maxHp: 100, st: 100, maxSt: 100, stDelay: 0,
   state: 'move', t: 0, combo: 0, comboWin: 0, queued: false, hitDone: 0, invuln: 0, skillCd: 0,
-  dodgeDir: new THREE.Vector3(), kb: new THREE.Vector3(), runPhase: 0, run: 0, lock: null, attackHeld: false, attackHoldT: 0,
+  gy: 0, lean: 0, dodgeDir: new THREE.Vector3(), kb: new THREE.Vector3(), runPhase: 0, run: 0, lock: null, attackHeld: false, attackHoldT: 0,
 };
 const SKILL_CD = 8, DODGE_COST = 25;
 const ATK = [
@@ -388,7 +389,7 @@ const ZCFG = {
   brute: { hp: 210, walk: 0.8, chase: 1.6, dmg: 24, range: 2.4, detect: 18, r: 0.8, scale: 1.55, wind: 0.9, rec: 0.9, knockRes: 0.25, pitch: 0.6, h: 1.8 },
   spitter: { hp: 38, walk: 1.0, chase: 2.1, dmg: 10, range: 12, detect: 22, r: 0.42, scale: 1.0, wind: 0.6, rec: 0.6, knockRes: 1, pitch: 1.2, prefer: 8, h: 1.75 },
   armored: { hp: 110, walk: 0.8, chase: 1.75, dmg: 14, range: 1.6, detect: 18, r: 0.46, scale: 1.03, wind: 0.6, rec: 0.7, knockRes: 0.45, pitch: 0.8, h: 1.8 },
-  boss: { hp: 1800, walk: 1.5, chase: 2.3, dmg: 26, range: 3.8, detect: 99, r: 1.7, scale: 1.0, wind: 0.85, rec: 0.9, knockRes: 0.03, pitch: 0.4, h: 4.3 },
+  boss: { hp: 1800, walk: 1.5, chase: 2.3, dmg: 26, range: 4.2, detect: 99, r: 1.85, scale: 1.18, wind: 0.85, rec: 0.9, knockRes: 0.03, pitch: 0.4, h: 5.0 },
 };
 const ZNAME = { walker: '行屍', runner: '疾行者', brute: '巨屍', spitter: '噴吐者', armored: '裝甲屍', boss: '融合巨獸' };
 const zombies = [];
@@ -399,10 +400,10 @@ function spawnZombie(type, x, z) {
   rig.root.scale.setScalar(cfg.scale);
   applyShadowFlags(rig.root);
   const blob = new THREE.Mesh(blobGeo, blobMat); blob.scale.setScalar(cfg.r * 1.4); blob.position.y = 0.022; scene.add(blob);
-  scene.add(rig.root);
+  const lift = new THREE.Group(); lift.add(rig.root); scene.add(lift);
   const hpMul = type === 'boss' ? 1 : 1 + Math.max(0, G.wave - 1) * 0.08;
   const z0 = {
-    type, cfg, rig, blob, pos: new THREE.Vector3(x, 0, z), vel: new THREE.Vector3(), facing: Math.random() * TAU,
+    type, cfg, rig, blob, lift, gy: 0, hitK: 0, hitSide: 0, deadFwd: Math.random() < 0.55 ? 1 : -1, pos: new THREE.Vector3(x, 0, z), vel: new THREE.Vector3(), facing: Math.random() * TAU,
     hp: cfg.hp * hpMul, maxHp: cfg.hp * hpMul, state: 'rise', t: 0, hitDone: false, atkCd: 0.5 + Math.random(), spitCd: 1.5 + Math.random() * 2,
     wander: new THREE.Vector3(x, 0, z), aggroT: 1 + Math.random() * 3, groanT: 2 + Math.random() * 6, phase: Math.random() * 10,
     showHp: 0, flash: 0, alive: true, isBoss: type === 'boss', attack: 'melee', slamCd: 6, volleyCd: 4, summonCd: 14, speedNow: 0,
@@ -417,7 +418,7 @@ function setFlash(z, on) {
   z.rig.mats.forEach((m, i) => { if (m.emissive) m.emissive.setHex(on ? 0x5a1010 : z.baseEm[i]); });
 }
 function removeZombie(z) {
-  scene.remove(z.rig.root); scene.remove(z.blob);
+  scene.remove(z.lift); scene.remove(z.blob);
   z.rig.mats.forEach(m => m.dispose());
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i, 1);
 }
@@ -430,11 +431,14 @@ function damageZombie(z, dmg, dirX, dirZ, knock, opts = {}) {
   else if (Math.random() < (opts.crit != null ? opts.crit : 0.12)) { crit = true; dmg *= opts.gun ? 2 : 1.6; }
   if (z.type === 'armored') {
     const guarding = front && z.state !== 'hurt' && z.state !== 'rise';
-    if (opts.gun) { if (opts.ap) dmg *= 1 + 0.25 * opts.ap; else { dmg *= guarding ? 0.3 : 0.65; blocked = guarding; } }
+    const back = Math.abs(angDiff(z.facing, toP)) > 2.2;
+    if (back) { weak = true; dmg *= 1.35; }
+    else if (opts.gun) { if (opts.ap) dmg *= 1 + 0.25 * opts.ap; else { dmg *= guarding ? 0.3 : 0.65; blocked = guarding; } }
     else if (guarding && !opts.heavy) { dmg *= 0.5; blocked = true; }
   } else if (z.type === 'brute' && opts.gun && opts.ap) dmg *= 1 + 0.2 * opts.ap;
   dmg = Math.max(1, Math.round(dmg * (0.9 + Math.random() * 0.2)));
   z.hp -= dmg; z.showHp = 4; z.flash = 0.08; setFlash(z, true);
+  z.hitK = Math.min(1.3, z.hitK + (blocked ? 0.35 : opts.gun ? 0.6 : 1)) * (z.isBoss ? 0.5 : 1); z.hitSide = Math.sign(angDiff(z.facing, toP)) || 1;
   const hpos = new THREE.Vector3(z.pos.x, (z.isBoss ? 3.2 : 1.5 * z.cfg.scale), z.pos.z);
   floatText(hpos, weak ? `弱點 ${dmg}` : blocked ? `格擋 ${dmg}` : String(dmg), weak || crit ? 'crit' : blocked ? 'block' : (dmg >= 30 ? 'heavy' : ''));
   const fxPos = opts.at || hpos.setY(z.isBoss ? 2.8 : 1.2 * z.cfg.scale);
@@ -525,7 +529,10 @@ function animZombie(z, dt) {
   R.shinR.rotation.x = Math.max(0, Math.sin(ph)) * swing * 1.3 + 0.05;
   const baseY = z.isBoss ? 2.1 : 0.92;
   const bounce = T === 'runner' ? 0.07 : T === 'brute' ? 0.06 : 0.04;
-  R.body.position.y = baseY + Math.abs(Math.sin(ph)) * bounce * (z.isBoss ? 3 : 1) * (moving ? 1 : 0.3) - (T === 'brute' ? 0.03 : 0);
+  const limpDip = R.limp && moving && !z.isBoss && T !== 'runner' ? Math.max(0, Math.sin(ph) * R.limp) * 0.06 : 0;
+  R.body.position.y = baseY + Math.abs(Math.sin(ph)) * bounce * (z.isBoss ? 3 : 1) * (moving ? 1 : 0.3) - (T === 'brute' ? 0.03 : 0) - limpDip;
+  z.hitK = Math.max(0, z.hitK - dt * 5);
+  const hk = z.hitK > 0 ? Math.sin(Math.min(1, z.hitK) * Math.PI * 0.5) : 0;
   R.body.rotation.z = Math.sin(ph * 0.5) * (T === 'brute' ? 0.1 : 0.06) + (R.limp && T === 'walker' ? R.limp * 0.06 : 0);
   R.body.rotation.y = T === 'brute' ? Math.sin(ph) * 0.12 : 0;
   // idle arm poses by type
@@ -555,18 +562,24 @@ function animZombie(z, dt) {
     else { const k = Math.min(1, (z.t - w) / 0.15); aLx = aRx = lerp(-2.8, -0.6, k); torsoX = R.hunch + 0.35 * k; foreL = foreR = -0.6 * k; jaw = 0.7; }
   } else if (z.state === 'hurt') { torsoX = R.hunch - 0.5 * Math.max(0, 1 - z.t / 0.35); }
   else if (z.state === 'rise') { torsoX = R.hunch + 0.6; aLx = -2.6; aRx = -2.4; }
+  if (hk > 0) { torsoX -= hk * 0.55; aLx -= hk * 0.5; aRx -= hk * 0.35; aLz += hk * 0.3; aRz -= hk * 0.3; jaw = Math.max(jaw, 0.5 * hk); }
+  if (T === 'walker' && z.twitch > 0.12) aRz -= z.twitch * 0.8; // spasm
   R.armL.rotation.set(aLx, aLy, aLz); R.armR.rotation.set(aRx, aRy, aRz);
   R.foreL.rotation.x = foreL; R.foreR.rotation.x = foreR;
-  R.torso.rotation.x = lerp(R.torso.rotation.x, torsoX, damp(18, dt));
+  R.torso.rotation.x = lerp(R.torso.rotation.x, torsoX, damp(hk > 0 ? 40 : 18, dt));
+  R.body.rotation.z += z.hitSide * hk * 0.18;
   // head: lolling for walkers, jerky twitch for runners
   z.twitchT -= dt; if (z.twitchT <= 0) { z.twitchT = 0.15 + Math.random() * (T === 'runner' ? 0.4 : 1.6); z.twitch = (Math.random() - 0.5) * (T === 'runner' ? 0.9 : 0.4); }
-  R.head.rotation.z = lerp(R.head.rotation.z, Math.sin(ph * 0.33) * 0.22 + z.twitch, damp(T === 'runner' ? 25 : 4, dt));
-  R.head.rotation.x = Math.sin(ph * 0.5) * 0.1 - (T === 'runner' ? 0.35 : 0);
+  R.head.rotation.z = lerp(R.head.rotation.z, Math.sin(ph * 0.33) * 0.22 + z.twitch + R.headTilt, damp(T === 'runner' ? 25 : 4, dt));
+  R.head.rotation.x = Math.sin(ph * 0.5) * 0.1 - (T === 'runner' ? 0.35 : 0) - hk * 0.6;
   if (R.jaw) R.jaw.rotation.x = jaw;
   if (R.sacMat) { const pulse = 0.5 + 0.5 * Math.sin(G.time * 4 + z.phase); R.sacMat.emissiveIntensity = z.flash > 0 ? 1 : 0.7 + pulse * 0.6 + (z.state === 'attack' ? 0.8 : 0); if (R.sac && z.state !== 'attack') R.sac.scale.setScalar(1 + pulse * 0.08); }
   if (z.isBoss) {
     R.smallL.rotation.x = Math.sin(ph * 1.3) * 0.6; R.smallR.rotation.x = Math.cos(ph * 1.1) * 0.6;
-    const pulse = 0.85 + Math.sin(G.time * 6) * 0.15; R.core.scale.setScalar(pulse);
+    const hb = Math.pow(Math.max(0, Math.sin(G.time * 5.2)), 6), pulse = 0.85 + hb * 0.35 + Math.sin(G.time * 2.6) * 0.05; R.core.scale.setScalar(pulse);
+    if (R.coreMat) R.coreMat.color.setRGB(1, 0.7 + 0.3 * hb, 0.2 + 0.4 * hb);
+    if (R.veinMat) R.veinMat.color.setRGB(0.55 + 0.45 * hb, 0.25 + 0.4 * hb, 0.06 + 0.1 * hb);
+    if (R.jaw) R.jaw.rotation.x = 0.15 + Math.max(0, Math.sin(ph * 0.4)) * 0.35 + (z.state === 'attack' ? 0.4 : 0);
   }
 }
 function zLOS(z) {
@@ -658,16 +671,25 @@ function updateZombie(z, dt) {
       break;
     }
     case 'dead': {
-      const k = Math.min(1, z.t / 0.6), e = 1 - Math.pow(1 - k, 2);
-      z.rig.body.rotation.x = -Math.PI / 2 * e * 0.95;
-      z.rig.body.rotation.z = z.deadSide * e;
-      z.rig.body.position.y = lerp(z.isBoss ? 2.1 : 0.92, z.isBoss ? 0.8 : 0.25, e);
-      z.rig.armL.rotation.x = lerp(z.rig.armL.rotation.x, -2.6, damp(6, dt)); z.rig.armR.rotation.x = lerp(z.rig.armR.rotation.x, -2.9, damp(5, dt));
-      z.rig.legL.rotation.x = lerp(z.rig.legL.rotation.x, 0.3, damp(6, dt));
+      const RG = z.rig, base = z.isBoss ? 2.1 : 0.92, sc = base / 0.92, fwd = z.deadFwd;
+      const kb = Math.min(1, z.t / 0.3), eb = kb * (2 - kb);                    // knees buckle
+      const kf = clamp((z.t - 0.22) / 0.5, 0, 1), ef = kf * kf;                // then topple (accelerating)
+      const bounce = kf >= 1 ? Math.max(0, Math.sin((z.t - 0.72) * 14)) * Math.exp(-(z.t - 0.72) * 8) * 0.12 : 0;
+      RG.body.rotation.x = fwd * (Math.PI / 2 * 0.93 * ef - bounce);
+      RG.body.rotation.z = z.deadSide * ef;
+      RG.body.position.y = lerp(lerp(base, 0.62 * sc, eb), (fwd > 0 ? 0.2 : 0.24) * sc, ef);
+      RG.shinL.rotation.x = lerp(RG.shinL.rotation.x, 1.4 * (1 - ef * 0.7), damp(12, dt)); RG.shinR.rotation.x = lerp(RG.shinR.rotation.x, 1.1 * (1 - ef * 0.5), damp(12, dt));
+      RG.legL.rotation.x = lerp(RG.legL.rotation.x, -0.7 * eb * (1 - ef) + (fwd > 0 ? 0.1 : 0.4) * ef, damp(10, dt)); RG.legR.rotation.x = lerp(RG.legR.rotation.x, -0.4 * eb * (1 - ef) + 0.2 * ef, damp(10, dt));
+      RG.torso.rotation.x = lerp(RG.torso.rotation.x, fwd > 0 ? 0.25 : -0.2, damp(6, dt));
+      RG.head.rotation.x = lerp(RG.head.rotation.x, fwd > 0 ? -0.5 : 0.4, damp(6, dt)); RG.head.rotation.z = lerp(RG.head.rotation.z, z.deadSide * 1.6, damp(5, dt));
+      RG.armL.rotation.x = lerp(RG.armL.rotation.x, fwd > 0 ? -2.8 : -0.4, damp(6, dt)); RG.armR.rotation.x = lerp(RG.armR.rotation.x, fwd > 0 ? -2.5 : 0.3, damp(5, dt));
+      RG.armL.rotation.z = lerp(RG.armL.rotation.z, 0.6, damp(5, dt)); RG.armR.rotation.z = lerp(RG.armR.rotation.z, -0.5, damp(5, dt));
+      if (RG.jaw) RG.jaw.rotation.x = lerp(RG.jaw.rotation.x, 0.7, damp(4, dt));
+      if (kf >= 1 && !z.landed) { z.landed = true; burst(new THREE.Vector3(z.pos.x + Math.sin(z.facing) * fwd * 0.9 * sc, 0.15, z.pos.z + Math.cos(z.facing) * fwd * 0.9 * sc), z.isBoss ? 16 : 6, 'dust', 3, 0.15, 2); }
       if (z.t > 1.4) {
         const f = 1 - Math.min(1, (z.t - 1.4) / 1.0);
         if (!z.fading) { z.fading = true; z.rig.mats.forEach(m => { m.transparent = true; }); z.rig.root.traverse(o => { if (o.isMesh) o.castShadow = false; }); }
-        z.rig.mats.forEach(m => m.opacity = f);
+        z.rig.mats.forEach(m => m.opacity = f * (m.userData.op ?? 1));
         z.rig.root.position.y = -(1 - f) * 0.4;
         z.blob.visible = f > 0.3;
       }
@@ -705,6 +727,7 @@ function updateZombie(z, dt) {
   if (z.groanT <= 0 && z.alive) { z.groanT = 4 + Math.random() * 8; if (d < 18) Sfx.groan(cfg.pitch, 0.12 * (1 - d / 20)); }
   z.rig.root.position.x = z.pos.x; z.rig.root.position.z = z.pos.z; z.rig.root.rotation.y = z.facing;
   z.blob.position.x = z.pos.x; z.blob.position.z = z.pos.z;
+  const gyT = W.groundY(z.pos.x, z.pos.z); z.gy += (gyT - z.gy) * Math.min(1, dt * 12); z.lift.position.y = z.gy; z.blob.position.y = 0.022 + z.gy;
   animZombie(z, dt);
 }
 function separateZombies() {
@@ -1168,8 +1191,9 @@ function updatePlayer(dt) {
       removePickup(i);
     } else if (p.t > p.life) removePickup(i);
   }
-  hero.root.position.set(P.pos.x, 0, P.pos.z); hero.root.rotation.y = P.facing;
-  heroBlob.position.x = P.pos.x; heroBlob.position.z = P.pos.z;
+  P.gy += (W.groundY(P.pos.x, P.pos.z) - P.gy) * Math.min(1, dt * 14);
+  hero.root.position.set(P.pos.x, P.gy, P.pos.z); hero.root.rotation.y = P.facing;
+  heroBlob.position.set(P.pos.x, 0.025 + P.gy, P.pos.z);
   animateHero(dt);
 }
 const pony = { ax: [0, 0, 0], vx: [0, 0, 0], az: [0, 0, 0], vz: [0, 0, 0], lastFacing: 0, lastY: 0.95 };
@@ -1184,6 +1208,8 @@ function animateHero(dt) {
   let legL = 0, legR = 0, shinL = 0.05, shinR = 0.05, torsoX = 0.03, torsoY = 0, headX = 0, headY = 0;
   let armL = { x: 0.05, y: 0, z: 0.12 }, armR = { x: -0.25, y: 0, z: -0.12 };
   let foreL = -0.2, foreR = -0.45, weaponX = 0.35, skirtX = 0, gunPitch = 0.6, gunYaw = 0.3, gunAim = false;
+  const turnRate = angDiff(P.leanFacing ?? P.facing, P.facing) / Math.max(dt, 1e-3); P.leanFacing = P.facing;
+  P.lean = lerp(P.lean, clamp(-turnRate * 0.035 * run, -0.22, 0.22), damp(6, dt));
   if (P.state === 'move' || P.state === 'hurt') {
     // strafing: when aiming the legs run relative to the move direction
     let legDir = 1;
@@ -1194,7 +1220,8 @@ function animateHero(dt) {
     torsoX = 0.03 + 0.2 * run; headX = -0.12 * run;
     armL.x = Math.sin(ph) * 0.8 * run + 0.05; foreL = -0.3 - 0.7 * run; armL.z = 0.12 + 0.08 * run;
     armR.x = -0.25 - Math.sin(ph) * 0.45 * run - 0.25 * run; foreR = -0.45 - 0.45 * run;
-    bodyRZ = Math.sin(ph) * 0.03 * run; torsoY = Math.sin(ph) * 0.14 * run;
+    bodyRZ = Math.sin(ph) * 0.03 * run + P.lean; torsoY = Math.sin(ph) * 0.14 * run;
+    torsoX += 0.08 * run * run;
     skirtX = -0.2 * run + Math.sin(ph * 2) * 0.05 * run;
     weaponX = 0.35 + 0.4 * run;
     if (gunOut) {
@@ -1256,6 +1283,11 @@ function animateHero(dt) {
     const k = Math.min(1, P.t / 0.8);
     bodyRX = -Math.PI / 2 * k * 0.95; bodyY = lerp(0.95, 0.22, k); shinL = 0.4 * k; legR = -0.3 * k;
     armL = { x: -2.5 * k, y: 0, z: 0.4 }; armR = { x: -2.2 * k, y: 0, z: -0.6 }; headX = -0.4 * k;
+  }
+  if (P.state === 'move') { // idle breathing + slow weight shift
+    const breath = Math.sin(t * 1.7), idleK = Math.max(0, 1 - run * 2);
+    torsoX += breath * 0.02 * idleK; headX -= breath * 0.014 * idleK; armL.z += breath * 0.025 * idleK; armR.z -= breath * 0.02 * idleK;
+    bodyRZ += Math.sin(t * 0.6) * 0.02 * idleK; legL += Math.sin(t * 0.6) * 0.035 * idleK; legR -= Math.sin(t * 0.6) * 0.035 * idleK; headY += Math.sin(t * 0.37) * 0.08 * idleK;
   }
   const s = damp(P.state === 'attack' || P.state === 'skill' || P.state === 'dodge' || P.state === 'dead' ? 40 : (gunOut && INV.aimT > 0 ? 28 : 16), dt);
   R.body.position.y = lerp(R.body.position.y, bodyY, s);
@@ -1534,6 +1566,8 @@ function updateFx(dt) {
     bossLight.intensity = 10 + Math.sin(G.time * 6) * 3;
   } else bossLight.intensity = Math.max(0, bossLight.intensity - dt * 10);
   W.sky.position.copy(camera.position);
+  W.tick(dt, camera);
+  { const dx = P.pos.x - camera.position.x, dz = P.pos.z - camera.position.z, L = Math.hypot(dx, dz) || 1; rimLight.target.position.set(P.pos.x, 0.8, P.pos.z); rimLight.position.set(P.pos.x + dx / L * 10, 7, P.pos.z + dz / L * 10); }
   fillLight.position.set(camera.position.x, camera.position.y + 1.2, camera.position.z);
   // shadow camera follows the heroine
   if (Q.shadow) { moon.target.position.set(P.pos.x, 0, P.pos.z); moon.position.set(P.pos.x - 20, 30, P.pos.z + 10); }
@@ -1567,6 +1601,9 @@ function applyQuality(setting) {
   moon.castShadow = shadowOn;
   if (shadowOn) { moon.shadow.mapSize.set(Q.shadow, Q.shadow); if (moon.shadow.map) { moon.shadow.map.dispose(); moon.shadow.map = null; } }
   hero.root.traverse(o => { if (o.isMesh) o.castShadow = shadowOn && o.userData.cast !== false; });
+  const det = key !== 'low'; setCharDetail(det); applyCharBump([hero.mats.coat, hero.mats.coatSide], det);
+  for (const z of zombies) applyCharBump(z.rig.mats, det);
+  W.setQuality(key);
   for (const z of zombies) applyShadowFlags(z.rig.root);
   fireLights.forEach((l, i) => l.visible = i < Q.fires);
   lampLights.forEach((l, i) => l.visible = i < Q.lamps);
@@ -1574,7 +1611,7 @@ function applyQuality(setting) {
   emberGeo.setDrawRange(0, Q.embers); embers.visible = Q.embers > 0;
   fogSheets.forEach((f, i) => f.m.visible = i < Q.fog);
   scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); });
-  renderQualityUI();
+  renderQualityUI(); if (typeof renderRainUI === 'function') try { renderRainUI(); } catch (e) { }
 }
 function qLabel() { return qSetting === 'auto' ? `自動（${QUALITY[AUTO_Q].label}）` : QUALITY[qSetting].label; }
 function renderQualityUI() {
@@ -1583,6 +1620,10 @@ function renderQualityUI() {
   const qi = $('qInfo'); if (qi) qi.textContent = `目前：${qLabel()} · 解析度 ${pixelRatio.toFixed(2)}x${Q.shadow ? ' · 即時陰影' : ''}`;
 }
 document.querySelectorAll('[data-q]').forEach(b => b.addEventListener('click', () => applyQuality(b.dataset.q)));
+let rainSetting = true; try { rainSetting = localStorage.getItem('zb_rain') !== '0'; } catch (e) { }
+function renderRainUI() { const b = $('btnRain'); if (b) { b.textContent = '雨：' + (rainSetting ? '開' : '關') + (Q === QUALITY.low ? '（低畫質無效）' : ''); b.classList.toggle('on', rainSetting); } }
+W.setRain(rainSetting);
+if ($('btnRain')) $('btnRain').addEventListener('click', () => { rainSetting = !rainSetting; try { localStorage.setItem('zb_rain', rainSetting ? '1' : '0'); } catch (e) { } W.setRain(rainSetting); renderRainUI(); });
 $('btnQuality').addEventListener('click', () => { const order = ['auto', 'low', 'mid', 'high']; applyQuality(order[(order.indexOf(qSetting) + 1) % order.length]); });
 
 // ---------------------------------------------------------------- pause: weapons & parts panel
@@ -1739,4 +1780,4 @@ $('loading').classList.add('hidden');
 frame();
 
 // debug/test hook
-window.__zb = { acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, hero, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
+window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, hero, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
