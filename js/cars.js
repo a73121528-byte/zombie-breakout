@@ -221,7 +221,7 @@ export function buildCar(type, o = {}) {
     const ang = s * (0.85 + (seed % 3) * 0.15);
     const m = new THREE.Matrix4().makeRotationY(ang).premultiply(new THREE.Matrix4().makeTranslation(xa, 0, s * (W / 2 + 0.04)));
     panel.applyMatrix4(m); win.applyMatrix4(m); P(panel, 'paint'); parts.push({ g: win, m: glass });
-    const hole = new THREE.PlaneGeometry(len, ghTop - lowY - 0.05); if (s < 0) hole.rotateY(PI); hole.translate(xa - len / 2, (ghTop + lowY) / 2, s * (W / 2 + 0.006)); parts.push({ g: hole, m: 'carDark' });
+    const hole = new THREE.PlaneGeometry(len * 0.96, belt - lowY - 0.04); if (s < 0) hole.rotateY(PI); hole.translate(xa - len / 2, (belt + lowY) / 2, s * (W / 2 + 0.006)); parts.push({ g: hole, m: 'carDark' });
     void door;
   }
   return { parts, L, W, H, wr: S.wr };

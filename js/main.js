@@ -1433,7 +1433,7 @@ function drawBigMap() {
   bigCtx.fillStyle = '#fff'; bigCtx.strokeStyle = '#000'; bigCtx.lineWidth = 0.6; bigCtx.beginPath(); bigCtx.moveTo(0, 4.2); bigCtx.lineTo(2.6, -2.6); bigCtx.lineTo(0, -1); bigCtx.lineTo(-2.6, -2.6); bigCtx.closePath(); bigCtx.fill(); bigCtx.stroke();
   bigCtx.setTransform(1, 0, 0, 1, 0, 0); bigCtx.fillStyle = '#ffd84a'; bigCtx.font = 'bold 16px sans-serif'; bigCtx.textAlign = 'center'; bigCtx.fillText('北 N', S / 2, 18);
 }
-$('minimapWrap').addEventListener('pointerdown', e => { e.stopPropagation(); toggleBigMap(); });
+$('minimapWrap').addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); toggleBigMap(); });
 if ($('bigMapWrap')) $('bigMapWrap').addEventListener('pointerdown', e => { e.stopPropagation(); toggleBigMap(false); });
 const hpFill = $('hpFill'), hpGhost = $('hpGhost'), stFill = $('stFill'), cdEl = $('skillCd'), cdTxt = $('skillCdText'), bSkill = $('bSkill');
 const waveText = $('waveText'), killText = $('killText'), lockMark = $('lockMark'), bossFill = $('bossFill');

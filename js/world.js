@@ -208,7 +208,7 @@ export function buildWorld(scene) {
   mats.blood = new THREE.MeshBasicMaterial({ map: splat, color: 0x3a0407, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
   mats.line = new THREE.MeshBasicMaterial({ color: 0x6a6450, transparent: true, opacity: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
   mats.lineY = new THREE.MeshBasicMaterial({ color: 0x8a6a20, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
-  mats.puddle = new THREE.MeshPhongMaterial({ color: 0x0c0d14, specular: 0x8888a0, shininess: 120, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  mats.puddle = new THREE.MeshPhongMaterial({ color: 0x0c0d14, specular: 0x3a3a50, shininess: 120, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
   // vehicles
   mats.paint = new THREE.MeshPhongMaterial({ vertexColors: true, map: grime, shininess: 60, specular: 0x3a3a44 });
   mats.glass = new THREE.MeshPhongMaterial({ color: 0x07080b, specular: 0x9098b0, shininess: 110 });
