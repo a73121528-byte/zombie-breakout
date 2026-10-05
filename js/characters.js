@@ -56,8 +56,8 @@ export function getCharAtlas() {
   };
   const skinBase = (bruise = 1) => {
     blot(40, '150,150,140', 0.12, 0.3, 10, 40); blot(18, '255,255,250', 0.2, 0.4, 8, 30);
-    blot(6 * bruise, '80,40,90', 0.25, 0.45, 12, 30); blot(4 * bruise, '120,110,40', 0.15, 0.3, 10, 24);
-    for (let i = 0; i < 10; i++) vein(R() * 256, R() * 256, R() * 7, 8 + R() * 14 | 0, 1.6, 'rgba(50,30,70,.42)');
+    blot(7 * bruise, '70,30,80', 0.4, 0.65, 12, 30); blot(4 * bruise, '120,110,40', 0.15, 0.3, 10, 24);
+    for (let i = 0; i < 10; i++) vein(R() * 256, R() * 256, R() * 7, 8 + R() * 14 | 0, 2.2, 'rgba(40,20,60,.62)');
     speck(500, '60,50,50', 0.4);
   };
   cell(CELL.skin, () => skinBase(1));
@@ -126,10 +126,10 @@ export function getHeroFaceTex() {
   if (heroFace) return heroFace;
   const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
   g.clearRect(0, 0, 256, 256);
-  const ey = 131, ex = 45;
+  const ey = 158, ex = 44;
   // soft cheek blush + under-eye shading
   for (const s of [-1, 1]) {
-    const gr = g.createRadialGradient(128 + s * 58, 176, 2, 128 + s * 58, 176, 26); gr.addColorStop(0, 'rgba(230,120,130,.35)'); gr.addColorStop(1, 'rgba(230,120,130,0)'); g.fillStyle = gr; g.fillRect(128 + s * 58 - 30, 146, 60, 60);
+    const gr = g.createRadialGradient(128 + s * 56, 196, 2, 128 + s * 56, 196, 24); gr.addColorStop(0, 'rgba(230,120,130,.35)'); gr.addColorStop(1, 'rgba(230,120,130,0)'); g.fillStyle = gr; g.fillRect(128 + s * 56 - 30, 166, 60, 60);
   }
   for (const s of [-1, 1]) {
     const x = 128 + s * ex;
@@ -150,15 +150,15 @@ export function getHeroFaceTex() {
     g.lineWidth = 1; g.strokeStyle = 'rgba(40,20,40,.6)'; g.beginPath(); g.moveTo(-12, 4); g.quadraticCurveTo(2, 9, 13, 0); g.stroke();
     g.restore();
     // brows: slim, slightly angled (determined)
-    g.save(); g.translate(128 + s * (ex + 2), 99); g.scale(s, 1);
+    g.save(); g.translate(128 + s * (ex + 2), 124); g.scale(s, 1);
     g.fillStyle = '#3a1f4c'; g.beginPath(); g.moveTo(-17, 4); g.quadraticCurveTo(0, -5, 19, 1); g.quadraticCurveTo(0, -1, -17, 7); g.fill();
     g.restore();
   }
   // nose: soft shadow + tip highlight
-  g.fillStyle = 'rgba(150,90,90,.35)'; g.beginPath(); g.ellipse(128, 170, 7, 2.5, 0, 0, 7); g.fill();
-  g.strokeStyle = 'rgba(140,90,90,.25)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(122, 140); g.quadraticCurveTo(120, 158, 124, 166); g.stroke();
+  g.fillStyle = 'rgba(150,90,90,.4)'; g.beginPath(); g.ellipse(128, 199, 6, 2.2, 0, 0, 7); g.fill(); g.fillStyle = 'rgba(120,60,70,.5)'; g.fillRect(123, 198, 2, 2); g.fillRect(131, 198, 2, 2);
+  g.strokeStyle = 'rgba(140,90,90,.28)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(123, 168); g.quadraticCurveTo(121, 186, 125, 195); g.stroke();
   // lips
-  const ly = 211;
+  const ly = 224;
   g.fillStyle = '#b25a68'; g.beginPath(); g.moveTo(112, ly); g.quadraticCurveTo(120, ly - 7, 128, ly - 4); g.quadraticCurveTo(136, ly - 7, 144, ly); g.quadraticCurveTo(128, ly + 2, 112, ly); g.fill();
   g.fillStyle = '#c86a78'; g.beginPath(); g.moveTo(113, ly + 0.5); g.quadraticCurveTo(128, ly + 12, 143, ly + 0.5); g.quadraticCurveTo(128, ly + 3, 113, ly + 0.5); g.fill();
   g.strokeStyle = '#5a2030'; g.lineWidth = 1.4; g.beginPath(); g.moveTo(111, ly); g.quadraticCurveTo(128, ly + 3, 145, ly); g.stroke();
@@ -301,7 +301,6 @@ export function buildHeroine() {
   kit.add(head, GEO.cap(0.037, 0.06, 10), HC.skin, [0, 0.045, 0]);
   kit.add(head, GEO.sph(20, 14), HC.skin, [0, 0.175, 0.012], [0.094, 0.114, 0.102]);
   kit.add(head, GEO.sph(14, 10), HC.skin, [0, 0.125, 0.03], [0.06, 0.05, 0.062]);       // jaw (inside the face patch)
-  kit.add(head, GEO.sph(), HC.skin, [0, 0.163, 0.108], [0.011, 0.015, 0.013]);      // nose
   for (const s of [1, -1]) kit.add(head, GEO.sph(), HC.skin, [0.093 * s, 0.17, 0.0], [0.012, 0.024, 0.016]); // ears
   // face decal patch (eyes, brows, lips)
   const faceMat = new THREE.MeshPhongMaterial({ map: getHeroFaceTex(), transparent: true, depthWrite: false, shininess: 38, specular: 0x2a2630, emissive: 0x050308 });
@@ -316,11 +315,11 @@ export function buildHeroine() {
   }
   for (let i = 0; i < 7; i++) { // bangs, back row (longer)
     const x = -0.07 + i * 0.0233;
-    kit.add(head, GEO.cap(0.018, 0.085, 5), i % 2 ? HC.hair : HC.hairDk, [x, 0.222, 0.082 - Math.abs(x) * 0.3], [1.25, 1, 0.55], [-0.4, 0, (x > 0 ? 1 : -1) * 0.22 + (i - 3) * 0.03]);
+    kit.add(head, GEO.cap(0.018, 0.055, 5), i % 2 ? HC.hair : HC.hairDk, [x, 0.238, 0.08 - Math.abs(x) * 0.3], [1.25, 1, 0.55], [-0.4, 0, (x > 0 ? 1 : -1) * 0.22 + (i - 3) * 0.03]);
   }
   for (let i = 0; i < 6; i++) { // bangs, front row (short, highlighted)
     const x = -0.058 + i * 0.023;
-    kit.add(head, GEO.cap(0.014, 0.06, 5), i % 2 ? HC.hairHi : HC.hair, [x + 0.006, 0.245, 0.094 - Math.abs(x) * 0.3], [1.2, 1, 0.5], [-0.62, 0, (x > 0 ? 1 : -1) * 0.3 + (i - 2.5) * 0.05]);
+    kit.add(head, GEO.cap(0.014, 0.04, 5), i % 2 ? HC.hairHi : HC.hair, [x + 0.006, 0.252, 0.09 - Math.abs(x) * 0.3], [1.2, 1, 0.5], [-0.62, 0, (x > 0 ? 1 : -1) * 0.3 + (i - 2.5) * 0.05]);
   }
   for (const s of [1, -1]) { // face-framing locks (two layers)
     kit.add(head, GEO.cap(0.02, 0.2, 5), HC.hair, [0.086 * s, 0.11, 0.055], [1, 1, 0.6], [0.1, 0, 0.06 * s]);
@@ -479,11 +478,11 @@ export function buildGuns() {
 // ZOMBIES
 // ============================================================================
 const ZSTYLE = {
-  walker: { skin: [0x6a7262, 0x74745e, 0x64705c], cloth: [0x3a4658, 0x4a3a2c, 0x45454a, 0x5a2a2a, 0x3e4a32], pants: [0x2a2c34, 0x3a3226, 0x26262a], eye: 0xe8dca0, bulk: 1, thin: 1, hunch: 0.38 },
-  runner: { skin: [0x7a6660, 0x72645a], cloth: [0x6a1a1e, 0x2a3a5a, 0x5a5a20], pants: [0x1e1e24, 0x2a2a30], eye: 0xff4a30, bulk: 0.86, thin: 0.78, hunch: 0.6 },
-  brute: { skin: [0x62625a, 0x6a5e54], cloth: [0x3a3634, 0x2c3238], pants: [0x22232a], eye: 0xffa040, bulk: 1.5, thin: 1.3, hunch: 0.34 },
-  spitter: { skin: [0x66764e, 0x5c6c4c], cloth: [0x3c3e34, 0x4a4436], pants: [0x2a2c26], eye: 0x9cff60, bulk: 1.05, thin: 0.95, hunch: 0.24 },
-  armored: { skin: [0x6a6e62], cloth: [0x1e2638], pants: [0x1a2030], eye: 0xff3a2a, bulk: 1.1, thin: 1.05, hunch: 0.15 },
+  walker: { skin: [0x5c6454, 0x666450, 0x56604e], cloth: [0x3a4658, 0x4a3a2c, 0x45454a, 0x5a2a2a, 0x3e4a32], pants: [0x2a2c34, 0x3a3226, 0x26262a], eye: 0xe8dca0, bulk: 1, thin: 1, hunch: 0.38 },
+  runner: { skin: [0x6a5852, 0x62564e], cloth: [0x6a1a1e, 0x2a3a5a, 0x5a5a20], pants: [0x1e1e24, 0x2a2a30], eye: 0xff4a30, bulk: 0.86, thin: 0.78, hunch: 0.6 },
+  brute: { skin: [0x56564e, 0x5c5248], cloth: [0x3a3634, 0x2c3238], pants: [0x22232a], eye: 0xffa040, bulk: 1.5, thin: 1.3, hunch: 0.34 },
+  spitter: { skin: [0x58664a, 0x505e44], cloth: [0x3c3e34, 0x4a4436], pants: [0x2a2c26], eye: 0x9cff60, bulk: 1.05, thin: 0.95, hunch: 0.24 },
+  armored: { skin: [0x5c6056], cloth: [0x1e2638], pants: [0x1a2030], eye: 0xff3a2a, bulk: 1.1, thin: 1.05, hunch: 0.15 },
 };
 const BLOOD = 0x5e080c, BLOOD2 = 0x2e0306, BONE = 0xc4b8a0, MOUTH = 0x1a0606, TEETH = 0xd0c8a8, RAW = 0x6a1e22;
 const zTemplates = new Map();
@@ -638,7 +637,7 @@ function makeZombieTemplate(type, variant) {
   if (type !== 'armored' && rng() < 0.7) kit.add(head, GEO.sphPart(0, 1.3), pick([0x1a1614, 0x3a2a1a, 0x5a5048]), [0, 0.19 * hs, -0.01], [0.105 * hs, 0.12 * hs, 0.115 * hs], [-0.4, rng() - 0.5, 0.2]);
   if (type === 'runner') kit.add(head, GEO.sphPart(0, 1.7), cloth, [0, 0.18, -0.02], [0.118, 0.13, 0.125], [-0.7, 0, 0]);
   for (const s of [1, -1]) eyeKit.add(head, GEO.sph(6, 4), S.eye, [0.034 * s * hs, 0.19 * hs, 0.092 * hs], [0.015, 0.01, 0.008], [0, 0, 0], 0);
-  const eg = glowSprite(S.eye, 0.17 * hs, 0.75); eg.position.set(0, 0.19 * hs, 0.115 * hs); head.add(eg);
+  const eg = glowSprite(S.eye, 0.11 * hs, 0.6); eg.position.set(0, 0.19 * hs, 0.125 * hs); head.add(eg);
   if (type === 'armored') {
     kit.t(CELL.metal).add(head, GEO.sphPart(0, 1.75, 14, 8), 0x101216, [0, 0.19, -0.005], [0.122, 0.13, 0.13], [-0.25, 0, 0]);
     kit.add(head, GEO.box(), 0x0a0b0e, [0, 0.27, -0.03], [0.02, 0.03, 0.2]);
@@ -702,7 +701,7 @@ export function buildBoss() {
   return instantiate(bossTemplate, 'boss');
 }
 function makeBossTemplate() {
-  const FL = 0x7a6060, SN = 0x6a2026, BN = 0xc4b8a0, DK = 0x2a1a1c, rng = seeded(4242);
+  const FL = 0x6a5050, SN = 0x5a1a20, BN = 0xc4b8a0, DK = 0x2a1a1c, rng = seeded(4242);
   const A = getCharAtlas();
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, map: A.map, emissive: 0x000000 }); mat.userData.bumpable = 1.6;
   const kit = new Kit(rng);
