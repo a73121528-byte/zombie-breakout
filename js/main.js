@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261005a';
-import { buildWorld } from './world.js?v=20261005a';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex } from './characters.js?v=20261005a';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005a';
+import { Sfx } from './audio.js?v=20261005b';
+import { buildWorld } from './world.js?v=20261005b';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex } from './characters.js?v=20261005b';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005b';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -17,9 +17,9 @@ const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
 
 // ---------------------------------------------------------------- graphics quality
 const QUALITY = {
-  low: { label: '低', prCap: 1.0, prMin: 0.6, shadow: 0, embers: 0, fog: 0, parts: 0.55, lamps: 0, fires: 1, grain: false },
-  mid: { label: '中', prCap: 1.35, prMin: 0.7, shadow: 512, embers: 70, fog: 4, parts: 0.8, lamps: 1, fires: 2, grain: true },
-  high: { label: '高', prCap: 2.0, prMin: 0.8, shadow: 1024, embers: 140, fog: 8, parts: 1, lamps: 2, fires: 3, grain: true },
+  low: { label: '低', prCap: 1.0, prMin: 0.6, shadow: 0, embers: 0, fog: 0, parts: 0.55, lamps: 0, fires: 1, grain: false, detail: 22, far: 52 },
+  mid: { label: '中', prCap: 1.35, prMin: 0.7, shadow: 512, embers: 70, fog: 4, parts: 0.8, lamps: 1, fires: 2, grain: true, detail: 34, far: 66 },
+  high: { label: '高', prCap: 2.0, prMin: 0.8, shadow: 1024, embers: 140, fog: 8, parts: 1, lamps: 2, fires: 3, grain: true, detail: 48, far: 85 },
 };
 let qSetting = 'auto';
 try { qSetting = localStorage.getItem('zb_quality') || 'auto'; } catch (e) { }
@@ -50,7 +50,7 @@ const FOG = 0x15131b;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(FOG);
 scene.fog = new THREE.FogExp2(FOG, 0.046);
-const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 95);
+const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 80);
 
 scene.add(new THREE.HemisphereLight(0x6e6890, 0x2c2226, 1.8));
 const moon = new THREE.DirectionalLight(0xa49ad0, 1.5); moon.position.set(-20, 30, 10); scene.add(moon); scene.add(moon.target);
@@ -71,37 +71,19 @@ function onResize() {
 addEventListener('resize', onResize); onResize();
 
 // ---------------------------------------------------------------- collision helpers
-function resolveCircle(p, r) {
-  for (const c of W.colliders) {
-    const cx = clamp(p.x, c.minX, c.maxX), cz = clamp(p.z, c.minZ, c.maxZ);
-    let dx = p.x - cx, dz = p.z - cz; const d2 = dx * dx + dz * dz;
-    if (d2 < r * r) {
-      if (d2 > 1e-6) { const d = Math.sqrt(d2); p.x = cx + dx / d * r; p.z = cz + dz / d * r; }
-      else {
-        const l = p.x - c.minX, rr = c.maxX - p.x, t = p.z - c.minZ, b = c.maxZ - p.z; const m = Math.min(l, rr, t, b);
-        if (m === l) p.x = c.minX - r; else if (m === rr) p.x = c.maxX + r; else if (m === t) p.z = c.minZ - r; else p.z = c.maxZ + r;
-      }
-    }
-  }
-  p.x = clamp(p.x, -BOUND, BOUND); p.z = clamp(p.z, -BOUND, BOUND);
-}
-function insideCollider(x, z, pad = 0) { return W.colliders.some(c => x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad); }
-// ray vs AABB colliders (with height). minH: ignore colliders lower than this
-function rayCast(o, d, len, minH = 1.2) {
-  let best = len;
-  for (const c of W.colliders) {
-    if (c.h < minH) continue;
-    let tmin = 0, tmax = best, ok = true;
-    const ax0 = o.x, ax1 = o.y, ax2 = o.z;
-    for (let k = 0; k < 3; k++) {
-      const oo = k === 0 ? ax0 : k === 1 ? ax1 : ax2, dd = k === 0 ? d.x : k === 1 ? d.y : d.z;
-      const mn = k === 0 ? c.minX : k === 1 ? 0 : c.minZ, mx = k === 0 ? c.maxX : k === 1 ? c.h : c.maxZ;
-      if (Math.abs(dd) < 1e-6) { if (oo < mn || oo > mx) { ok = false; break; } }
-      else { let t1 = (mn - oo) / dd, t2 = (mx - oo) / dd; if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) { ok = false; break; } }
-    }
-    if (ok && tmin < best) best = tmin;
-  }
-  return best;
+const resolveCircle = (p, r) => W.resolveCircle(p, r);
+const insideCollider = (x, z, pad = 0) => W.inside(x, z, pad);
+// ray vs oriented-box colliders (with height). minH: ignore colliders lower than this
+const rayCast = (o, d, len, minH = 1.2) => W.rayCast(o, d, len, minH);
+// pooled dynamic lights, re-assigned to the nearest fires / street lamps
+const fireLights = [0, 1, 2].map(() => { const l = new THREE.PointLight(0xff7a30, 0, 16, 1.6); l.position.set(0, -50, 0); scene.add(l); return l; });
+const lampLights = [0, 1].map(() => { const l = new THREE.PointLight(0xffb878, 0, 13, 1.5); l.position.set(0, -50, 0); scene.add(l); return l; });
+function assignLights() {
+  const px = P.pos.x, pz = P.pos.z;
+  const byD = (a, b) => ((a.x - px) ** 2 + (a.z - pz) ** 2) - ((b.x - px) ** 2 + (b.z - pz) ** 2);
+  W.fires.forEach(f => f.light = null); W.lamps.forEach(l => l.light = null);
+  const fs = W.fires.slice().sort(byD); fireLights.forEach((L, i) => { const f = fs[i]; if (!f) { L.intensity = 0; return; } f.light = L; L.position.set(f.x, (f.y || 0.9) + (f.big ? 1.4 : 0.9), f.z); L.distance = f.big ? 20 : 16; });
+  const ls = W.lamps.filter(l => l.mode !== 'dead').sort(byD); lampLights.forEach((L, i) => { const l = ls[i]; if (!l) { L.intensity = 0; return; } l.light = L; L.position.set(l.x, 4.4, l.z); });
 }
 
 // ---------------------------------------------------------------- player
@@ -587,6 +569,14 @@ function animZombie(z, dt) {
     const pulse = 0.85 + Math.sin(G.time * 6) * 0.15; R.core.scale.setScalar(pulse);
   }
 }
+function zLOS(z) {
+  z.losT = 0.3;
+  const dx = P.pos.x - z.pos.x, dz = P.pos.z - z.pos.z, L = Math.hypot(dx, dz) || 1;
+  _losO.set(z.pos.x, 0.6, z.pos.z); _losD.set(dx / L, 0, dz / L);
+  z.los = W.rayCast(_losO, _losD, L, 0.4) >= L - 0.3;
+  return z.los;
+}
+const _losO = new THREE.Vector3(), _losD = new THREE.Vector3();
 function updateZombie(z, dt) {
   const cfg = z.cfg;
   const dx = P.pos.x - z.pos.x, dz = P.pos.z - z.pos.z, d = Math.hypot(dx, dz);
@@ -686,6 +676,12 @@ function updateZombie(z, dt) {
     }
   }
   if (z.state !== 'dead' && z.state !== 'rise') {
+    // route around buildings/cars with the player-centred flow field when far or without line of sight
+    if (z.state === 'chase' && moveSpeed > 0 && faceTo === toP && d > 2.2) {
+      let useFlow = d > 7;
+      if (!useFlow) { z.losT = (z.losT || 0) - dt; if (z.losT <= 0) zLOS(z); useFlow = !z.los; }
+      if (useFlow) { const fd = W.flowDir(z.pos.x, z.pos.z); if (fd !== null) faceTo = fd; }
+    }
     if (z.detourT > 0) { z.detourT -= dt; if (faceTo !== null && moveSpeed > 0) faceTo += z.detour * 1.25; }
     if (faceTo !== null) z.facing = lerpAng(z.facing, faceTo, damp(z.isBoss ? 3 : 7, dt));
     const px0 = z.pos.x, pz0 = z.pos.z;
@@ -1307,28 +1303,34 @@ const MAX_WAVE = 5;
 function waveList(n) {
   const L = [];
   const push = (t, c) => { for (let i = 0; i < c; i++) L.push(t); };
-  if (n === 1) push('walker', 6);
-  if (n === 2) { push('walker', 6); push('runner', 3); }
-  if (n === 3) { push('walker', 6); push('runner', 3); push('brute', 1); push('armored', 1); }
+  if (n === 1) push('walker', 8);
+  if (n === 2) { push('walker', 8); push('runner', 4); }
+  if (n === 3) { push('walker', 8); push('runner', 3); push('brute', 1); push('armored', 1); }
   if (n === 4) { push('walker', 6); push('runner', 4); push('spitter', 3); push('brute', 1); push('armored', 2); }
   if (n === 5) { push('walker', 8); push('runner', 5); push('spitter', 3); push('brute', 2); push('armored', 3); }
   for (let i = L.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0;[L[i], L[j]] = [L[j], L[i]]; }
   return L;
 }
 function spawnAtEdge(type) {
+  // zombies emerge anywhere on the big map, out of sight, at a walkable distance, then home in via the flow field
   const fx = -Math.sin(CAM.yaw), fz = -Math.cos(CAM.yaw);
-  const cands = W.spawnPoints.map(([x, z]) => {
+  const pad = type === 'boss' ? 2.2 : 0.8;
+  const cands = [];
+  for (const [x, z] of W.spawnPoints) {
     const dx = x - P.pos.x, dz = z - P.pos.z, d = Math.hypot(dx, dz);
-    const inView = (dx * fx + dz * fz) / (d || 1) > 0.5;
-    return { x, z, score: (d > 13 ? 0 : 100) + (d > 25 ? 25 : 0) + (inView && d < 20 ? 15 : 0) + Math.random() * 30 };
-  }).sort((a, b) => a.score - b.score);
-  for (const c of cands) {
-    for (let tries = 0; tries < 6; tries++) {
-      const x = clamp(c.x + (Math.random() - .5) * 4, -BOUND + 1, BOUND - 1), z = clamp(c.z + (Math.random() - .5) * 4, -BOUND + 1, BOUND - 1);
-      if (!insideCollider(x, z, type === 'boss' ? 2 : 0.8)) { const zz = spawnZombie(type, x, z); zz.aggroT = 0.5 + Math.random() * 2; return zz; }
+    if (d < 13 || d > 48) continue;
+    const fd = W.flowDist(x, z);
+    const inView = (dx * fx + dz * fz) / (d || 1) > 0.45;
+    cands.push({ x, z, score: (d < 17 ? 40 : 0) + (d > 34 ? (d - 34) * 3 : 0) + (fd < 0 ? 400 : fd > 55 ? (fd - 55) * 2 : 0) + (inView && d < 26 ? 25 : 0) + Math.random() * 30 });
+  }
+  cands.sort((a, b) => a.score - b.score);
+  for (const c of cands.slice(0, 40)) {
+    for (let tries = 0; tries < 4; tries++) {
+      const x = clamp(c.x + (Math.random() - .5) * 3, -BOUND + 1, BOUND - 1), z = clamp(c.z + (Math.random() - .5) * 3, -BOUND + 1, BOUND - 1);
+      if (!insideCollider(x, z, pad)) { const zz = spawnZombie(type, x, z); zz.aggroT = 0.3 + Math.random() * 1.2; return zz; }
     }
   }
-  return spawnZombie(type, 0, -30);
+  return spawnZombie(type, P.pos.x > 0 ? P.pos.x - 20 : P.pos.x + 20, P.pos.z);
 }
 function startWave(n) {
   G.wave = n; G.queue = waveList(n); G.phase = 'fight'; G.spawnT = 0;
@@ -1359,32 +1361,80 @@ function updateWaves(dt) {
 // ---------------------------------------------------------------- HUD update
 const mm = $('minimap').getContext('2d');
 let mmFrame = 0;
-function drawMinimap() {
-  const c = mm, S = 120, sc = 1.9;
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  c.clearRect(0, 0, S, S);
-  c.fillStyle = 'rgba(28,26,30,0.9)'; c.fillRect(0, 0, S, S);
-  c.save();
-  c.translate(S / 2, S / 2); c.rotate(CAM.yaw); c.scale(sc, sc); c.translate(-P.pos.x, -P.pos.z);
-  c.fillStyle = 'rgba(70,66,72,0.6)'; c.fillRect(-7, -40, 14, 80); c.fillRect(-40, -7, 80, 14);
-  for (const r of W.mapRects) {
-    c.save(); c.translate(r.x, r.z); c.rotate(-r.rot);
-    c.fillStyle = r.kind === 'b' ? '#5c5860' : r.kind === 'f' ? '#ff7a30' : '#3e3b42';
-    c.fillRect(-r.w / 2, -r.d / 2, r.w, r.d); c.restore();
+// static map layer rendered once (2 px per metre)
+const MAP_PX = 2, MAP_R = 96;
+const mapLayer = document.createElement('canvas'); mapLayer.width = mapLayer.height = MAP_R * 2 * MAP_PX;
+{
+  const c = mapLayer.getContext('2d');
+  c.fillStyle = '#2a282e'; c.fillRect(0, 0, mapLayer.width, mapLayer.height);
+  c.setTransform(MAP_PX, 0, 0, MAP_PX, MAP_R * MAP_PX, MAP_R * MAP_PX);
+  const col = { blk: '#45424a', p: '#5a5348', b: '#77727c', r: '#5a4a40', c: '#2c2a30', v: '#8a3a30', g: '#6a3030', f: '#ff7a30' };
+  const order = ['blk', 'p', 'g', 'b', 'r', 'c', 'v', 'f'];
+  for (const k of order) for (const r of W.mapRects) {
+    if (r.kind !== k) continue;
+    c.save(); c.translate(r.x, r.z); c.rotate(-r.rot); c.fillStyle = col[k] || '#3e3b42';
+    if (k === 'b') { c.fillRect(-r.w / 2, -r.d / 2, r.w, r.d); c.strokeStyle = '#2a282e'; c.lineWidth = 0.5; c.strokeRect(-r.w / 2, -r.d / 2, r.w, r.d); }
+    else c.fillRect(-r.w / 2, -r.d / 2, r.w, r.d);
+    c.restore();
   }
-  c.strokeStyle = 'rgba(150,20,30,.7)'; c.lineWidth = 0.6; c.strokeRect(-BOUND, -BOUND, BOUND * 2, BOUND * 2);
+  c.fillStyle = 'rgba(150,140,110,.35)'; for (const r of W.roads) for (let t = -84; t < 84; t += 6) { c.fillRect(r - 0.2, t, 0.4, 3); c.fillRect(t, r - 0.2, 3, 0.4); }
+  c.strokeStyle = 'rgba(200,30,40,.85)'; c.lineWidth = 1; c.strokeRect(-BOUND, -BOUND, BOUND * 2, BOUND * 2);
+  c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(-MAP_R, -MAP_R, MAP_R * 2, MAP_R - BOUND); c.fillRect(-MAP_R, BOUND, MAP_R * 2, MAP_R - BOUND); c.fillRect(-MAP_R, -BOUND, MAP_R - BOUND, BOUND * 2); c.fillRect(BOUND, -BOUND, MAP_R - BOUND, BOUND * 2);
+}
+function mapDots(c, scaleDot) {
   for (const z of zombies) {
     if (!z.alive) continue;
     c.fillStyle = z.isBoss ? '#ffd84a' : z.type === 'armored' ? '#6aa0ff' : '#ff2a2a';
-    c.beginPath(); c.arc(z.pos.x, z.pos.z, z.isBoss ? 2.2 : 1.1, 0, TAU); c.fill();
+    c.beginPath(); c.arc(z.pos.x, z.pos.z, (z.isBoss ? 2.4 : 1.2) * scaleDot, 0, TAU); c.fill();
   }
-  for (const o of orbs) { c.fillStyle = '#ff8090'; c.fillRect(o.m.position.x - .6, o.m.position.z - .6, 1.2, 1.2); }
-  for (const p of pickups) { c.fillStyle = p.kind === 'ammo' ? '#ffc840' : (PARTS[p.key].color); c.fillRect(p.g.position.x - .7, p.g.position.z - .7, 1.4, 1.4); }
+  for (const o of orbs) { c.fillStyle = '#ff8090'; c.fillRect(o.m.position.x - .7 * scaleDot, o.m.position.z - .7 * scaleDot, 1.4 * scaleDot, 1.4 * scaleDot); }
+  for (const p of pickups) { c.fillStyle = p.kind === 'ammo' ? '#ffc840' : (PARTS[p.key].color); c.fillRect(p.g.position.x - .8 * scaleDot, p.g.position.z - .8 * scaleDot, 1.6 * scaleDot, 1.6 * scaleDot); }
+}
+function drawMinimap() {
+  const c = mm, S = 120, sc = 1.6, R = S / 2;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, S, S);
+  c.save();
+  c.translate(R, R); c.rotate(CAM.yaw); c.scale(sc, sc); c.translate(-P.pos.x, -P.pos.z);
+  c.drawImage(mapLayer, -MAP_R, -MAP_R, MAP_R * 2, MAP_R * 2);
+  mapDots(c, 1);
   c.translate(P.pos.x, P.pos.z); c.rotate(-P.facing);
   c.fillStyle = '#fff'; c.beginPath(); c.moveTo(0, 2.6); c.lineTo(1.6, -1.6); c.lineTo(0, -0.6); c.lineTo(-1.6, -1.6); c.closePath(); c.fill();
   c.restore();
-  c.fillStyle = 'rgba(255,255,255,0.06)'; c.beginPath(); c.moveTo(S / 2, S / 2); c.arc(S / 2, S / 2, 60, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55); c.fill();
+  c.fillStyle = 'rgba(255,255,255,0.07)'; c.beginPath(); c.moveTo(R, R); c.arc(R, R, R, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55); c.fill();
+  // off-screen zombie indicators on the rim
+  const cy = Math.cos(CAM.yaw), sy = Math.sin(CAM.yaw);
+  for (const z of zombies) {
+    if (!z.alive) continue;
+    const dx = z.pos.x - P.pos.x, dz = z.pos.z - P.pos.z, d = Math.hypot(dx, dz);
+    if (d * sc < R - 6) continue;
+    const rx = dx * cy - dz * sy, rz = dx * sy + dz * cy, a = Math.atan2(rz, rx);
+    c.fillStyle = z.isBoss ? '#ffd84a' : d < 40 ? 'rgba(255,60,60,.95)' : 'rgba(255,60,60,.5)';
+    c.save(); c.translate(R + Math.cos(a) * (R - 5), R + Math.sin(a) * (R - 5)); c.rotate(a);
+    c.beginPath(); c.moveTo(4, 0); c.lineTo(-3, 3); c.lineTo(-3, -3); c.closePath(); c.fill(); c.restore();
+  }
+  // compass: north (−z) letter on the rim
+  const nx = R + Math.sin(CAM.yaw) * (R - 9), ny = R - Math.cos(CAM.yaw) * (R - 9);
+  c.fillStyle = 'rgba(10,8,10,.75)'; c.beginPath(); c.arc(nx, ny, 7, 0, TAU); c.fill();
+  c.fillStyle = '#ffd84a'; c.font = 'bold 10px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('北', nx, ny + 0.5);
 }
+// full map overlay (tap the minimap)
+const bigMap = $('bigMap'), bigCtx = bigMap ? bigMap.getContext('2d') : null;
+let bigOpen = false;
+function toggleBigMap(v = !bigOpen) { bigOpen = v; if (bigMap) $('bigMapWrap').classList.toggle('hidden', !v); if (v) drawBigMap(); }
+function drawBigMap() {
+  if (!bigCtx) return;
+  const S = bigMap.width, k = S / (MAP_R * 2);
+  bigCtx.setTransform(1, 0, 0, 1, 0, 0); bigCtx.clearRect(0, 0, S, S);
+  bigCtx.drawImage(mapLayer, 0, 0, S, S);
+  bigCtx.setTransform(k, 0, 0, k, S / 2, S / 2);
+  mapDots(bigCtx, 1.6);
+  bigCtx.translate(P.pos.x, P.pos.z); bigCtx.rotate(-P.facing);
+  bigCtx.fillStyle = '#fff'; bigCtx.strokeStyle = '#000'; bigCtx.lineWidth = 0.6; bigCtx.beginPath(); bigCtx.moveTo(0, 4.2); bigCtx.lineTo(2.6, -2.6); bigCtx.lineTo(0, -1); bigCtx.lineTo(-2.6, -2.6); bigCtx.closePath(); bigCtx.fill(); bigCtx.stroke();
+  bigCtx.setTransform(1, 0, 0, 1, 0, 0); bigCtx.fillStyle = '#ffd84a'; bigCtx.font = 'bold 16px sans-serif'; bigCtx.textAlign = 'center'; bigCtx.fillText('北 N', S / 2, 18);
+}
+$('minimapWrap').addEventListener('pointerdown', e => { e.stopPropagation(); toggleBigMap(); });
+if ($('bigMapWrap')) $('bigMapWrap').addEventListener('pointerdown', e => { e.stopPropagation(); toggleBigMap(false); });
 const hpFill = $('hpFill'), hpGhost = $('hpGhost'), stFill = $('stFill'), cdEl = $('skillCd'), cdTxt = $('skillCdText'), bSkill = $('bSkill');
 const waveText = $('waveText'), killText = $('killText'), lockMark = $('lockMark'), bossFill = $('bossFill');
 const wName = $('wName'), wMag = $('wMag'), wRes = $('wRes'), wRel = $('wRelFill'), wHud = $('weaponHud'), wParts = $('wParts'), bWeaponTxt = $('bWeaponTxt'), bAttackTxt = $('bAttackTxt');
@@ -1422,6 +1472,7 @@ function updateHud(dt) {
     for (const k in p) { const s = document.createElement('span'); s.style.color = PARTS[k].color; s.textContent = PARTS[k].icon + (p[k] > 1 ? p[k] : ''); s.title = PARTS[k].name; wParts.appendChild(s); }
   });
   if (++mmFrame % 2 === 0) drawMinimap();
+  if (bigOpen && mmFrame % 6 === 0) drawBigMap();
   let bi = 0;
   for (const z of zombies) {
     if (bi >= hpBars.length) break;
@@ -1447,6 +1498,7 @@ function flick(mode, t, ph) {
   if (mode === 'stutter') { const c = Math.sin(t * 1.3 + ph) + Math.sin(t * 3.7 + ph * 2); return c > 1.25 ? (Math.random() < 0.5 ? 0.05 : 1) : (c < -1.6 ? 0.1 : 1); }
   return 0.82 + Math.sin(t * 50 + ph) * 0.08 + (Math.random() < 0.02 ? -0.6 : 0);
 }
+let worldT = 0;
 function updateFx(dt) {
   if (trailT > 0) {
     trailT -= dt; trailPivot.position.set(P.pos.x, 1.05, P.pos.z);
@@ -1463,17 +1515,20 @@ function updateFx(dt) {
   for (const f of W.fires) {
     const fl = Math.sin(G.time * 13 + f.ph) * 0.5 + Math.sin(G.time * 23 + f.ph * 2) * 0.3 + Math.random() * 0.2;
     const s = 0.85 + fl * 0.18;
-    f.f1.scale.y = (f.big ? 1.6 : 1) * s * 1.1; f.f1.rotation.y += dt * 2;
+    f.f1.scale.y = (f.big ? 0.75 : 1) * s * 1.1; f.f1.rotation.y += dt * 2;
     if (f.f2) f.f2.scale.y = 0.6 * (0.9 + fl * 0.3);
-    if (f.light) f.light.intensity = 16 + fl * 6;
-    if (Math.random() < dt * 3) burst(new THREE.Vector3(f.x, f.big ? 2.6 : 1.5, f.z), 1, 'spark', 0.6, 0.04, 2.5);
+    if (f.light) f.light.intensity = (f.big ? 22 : 16) + fl * 6;
+    if (Math.abs(f.x - P.pos.x) < 30 && Math.abs(f.z - P.pos.z) < 30 && Math.random() < dt * (f.big ? 6 : 3)) burst(new THREE.Vector3(f.x, f.big ? 2.6 : 1.5, f.z), 1, 'spark', 0.6, 0.04, 2.5);
   }
   for (const l of W.lamps) {
-    const v = flick(l.mode, G.time, l.ph);
-    l.mat.color.setRGB(1 * v, 0.85 * v, 0.62 * v); l.cone.material.opacity = 0.05 * v;
+    const v = W.setLamp(l, flick(l.mode === 'dead' ? 'buzz' : l.mode, G.time, l.ph));
     if (l.light) l.light.intensity = 14 * v;
   }
-  for (const n of W.neons) n.mat.opacity = flick(n.mode, G.time * 0.9, n.ph);
+  W.lampsCommit();
+  for (const n of W.neons) n.mat.opacity = flick(n.mode, G.time * 0.9, n.ph) * (n.max || 1);
+  { const on = Math.floor(G.time * 5) % 2 === 0; W.sirens.r.color.setHex(on ? 0xff2020 : 0x2a0404); W.sirens.b.color.setHex(on ? 0x08081a : 0x2a5aff); }
+  worldT -= dt;
+  if (worldT <= 0) { worldT = 0.3; W.updateFlow(P.pos.x, P.pos.z); assignLights(); W.cull(camera.position.x, camera.position.z, Q.detail, Q.far); }
   if (G.boss && G.boss.alive) {
     G.boss.rig.core.getWorldPosition(bossLight.position);
     bossLight.intensity = 10 + Math.sin(G.time * 6) * 3;
@@ -1513,8 +1568,9 @@ function applyQuality(setting) {
   if (shadowOn) { moon.shadow.mapSize.set(Q.shadow, Q.shadow); if (moon.shadow.map) { moon.shadow.map.dispose(); moon.shadow.map = null; } }
   hero.root.traverse(o => { if (o.isMesh) o.castShadow = shadowOn && o.userData.cast !== false; });
   for (const z of zombies) applyShadowFlags(z.rig.root);
-  W.fires.filter(f => f.light).forEach((f, i) => f.light.visible = i < Q.fires);
-  W.lamps.filter(l => l.light).forEach((l, i) => l.light.visible = i < Q.lamps);
+  fireLights.forEach((l, i) => l.visible = i < Q.fires);
+  lampLights.forEach((l, i) => l.visible = i < Q.lamps);
+  worldT = 0;
   emberGeo.setDrawRange(0, Q.embers); embers.visible = Q.embers > 0;
   fogSheets.forEach((f, i) => f.m.visible = i < Q.fog);
   scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); });

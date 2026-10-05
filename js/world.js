@@ -1,340 +1,840 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
+import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261005b';
 
 // seeded rng
 let seed = 1337;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 const rr = (a, b) => a + rnd() * (b - a);
+const pick = a => a[(rnd() * a.length) | 0];
+const PI = Math.PI;
+const FONT = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 
-function canvasTex(w, h, draw) {
+function canvasTex(w, h, draw, srgb = true) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   draw(c.getContext('2d'), w, h);
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 2;
   return t;
 }
-
-// Box with UVs scaled to world size (tile = T meters) so one material can tile across sizes
-function tiledBox(w, h, d, T = 4) {
+// Box with UVs scaled to world size (tile = T meters)
+function tiledBox(w, h, d, T = 4, Ty = T) {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv;
-  const s = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
-  for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) {
-    const k = f * 4 + i; uv.setXY(k, uv.getX(k) * s[f][0] / T, uv.getY(k) * s[f][1] / T);
-  }
+  const s = [[d / T, h / Ty], [d / T, h / Ty], [w / T, d / T], [w / T, d / T], [w / T, h / Ty], [w / T, h / Ty]];
+  for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) { const k = f * 4 + i; uv.setXY(k, uv.getX(k) * s[f][0], uv.getY(k) * s[f][1]); }
   return g;
 }
 
+// ---------------------------------------------------------------- map constants
+export const BOUND = 84;
+const ROADS = [-56, 0, 56];
+const RH = 6;      // road half width (asphalt)
+const SWW = 3;     // sidewalk width
+const SPANS = [[-84, -65], [-47, -9], [9, 47], [65, 84]];
+const CH = 63;     // render chunk size
+const DETAIL = new Set(['vcD', 'vc2D', 'blood', 'puddle']);
+
 export function buildWorld(scene) {
   seed = 1337;
-  const colliders = [];   // {minX,maxX,minZ,maxZ,h}
+  const camPos = { x: 0, z: 0 };
+  const colliders = [];   // OBB {x,z,hw,hd,c,s,h, minX,maxX,minZ,maxZ}
   const mapRects = [];    // minimap {x,z,w,d,rot,kind}
   const buckets = new Map();
   const mats = {};
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3();
+  const chunkKey = (x, z) => `${Math.floor((x + 126) / CH)},${Math.floor((z + 126) / CH)}`;
+  // plain-coloured materials are folded into a few vertex-coloured ones to keep draw calls low
+  const VC = { curb: 0x77757a, metal: 0x2c2b30, rust: 0x4a2e22, white: 0x9a9890, dumpster: 0x1e3426, sand: 0x6a5a40, bush: 0x1e2618, statue: 0x3a4a44, lampOff: 0x3a3a3c, tire: 0x0d0d0e, carDark: 0x0f0f11, bumper: 0x1c1c1f, rubble: 0x3e3c42, gasRed: 0x9a1818 };
+  const VCD = { trash: 0x141316, bag: 0x0e0e10, wood: 0x4a3424, crate: 0x5a4430, brick: 0x5a3028, can: 0x2a3a2e, tireD: 0x0c0c0d, acunit: 0x8a8a86, tank: 0x9a9a9e, cone: 0xc05418 };
+  const VC2 = { paper: 0x8a867a, leaf: 0x3a3020, awning: 0x4a1e1c, awning2: 0x1e3a4a };
+  const VCP = { chrome: 0x8a8a90, rim: 0x55565c, lightOff: 0x6a6a64, tailOff: 0x4a0808, glass: 0x07080b, water: 0x06080c };
+  const VCB = { headL: 0xfff0c8, tailL: 0xd01010, panelLit: 0xd8e0e8 };
+  const _vc = new THREE.Color();
+  const setVC = (g, hex) => { _vc.set(hex); const n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) { a[i * 3] = _vc.r; a[i * 3 + 1] = _vc.g; a[i * 3 + 2] = _vc.b; } g.setAttribute('color', new THREE.BufferAttribute(a, 3)); };
+  const pushGeo = (g, matKey, cx, cz) => {
+    let n = g.index ? g.toNonIndexed() : g; if (n !== g) g.dispose();
+    if (VC[matKey] !== undefined) { setVC(n, VC[matKey]); matKey = 'vc'; }
+    else if (VCD[matKey] !== undefined) { setVC(n, VCD[matKey]); matKey = 'vcD'; }
+    else if (VC2[matKey] !== undefined) { setVC(n, VC2[matKey]); matKey = matKey === 'paper' || matKey === 'leaf' ? 'vc2D' : 'vc2'; }
+    else if (VCP[matKey] !== undefined) { setVC(n, VCP[matKey]); matKey = 'paint'; }
+    else if (VCB[matKey] !== undefined) { setVC(n, VCB[matKey]); matKey = 'vcB'; }
+    if (!n.attributes.uv) n.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(n.attributes.position.count * 2), 2));
+    const key = matKey + '@' + chunkKey(cx, cz);
+    if (!buckets.has(key)) buckets.set(key, { mat: matKey, list: [], cx, cz });
+    buckets.get(key).list.push(n);
+  };
   const add = (geo, matKey, x, y, z, ry = 0, rx = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
-    const g = geo.clone(); g.applyMatrix4(m);
-    if (!buckets.has(matKey)) buckets.set(matKey, []);
-    buckets.get(matKey).push(g);
+    _m.compose(_v.set(x, y, z), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(sx, sy, sz));
+    const g = geo.clone(); g.applyMatrix4(_m); pushGeo(g, matKey, x, z);
   };
-  const insideAny = (x, z) => colliders.some(c => x > c.minX - .5 && x < c.maxX + .5 && z > c.minZ - .5 && z < c.maxZ + .5);
   const addCollider = (x, z, w, d, ry = 0, h = 3) => {
-    const c = Math.abs(Math.cos(ry)), s = Math.abs(Math.sin(ry));
-    const hw = (w * c + d * s) / 2, hd = (w * s + d * c) / 2;
-    colliders.push({ minX: x - hw, maxX: x + hw, minZ: z - hd, maxZ: z + hd, h });
+    const c = Math.cos(ry), s = Math.sin(ry), ac = Math.abs(c), as = Math.abs(s);
+    const ex = (w * ac + d * as) / 2, ez = (w * as + d * ac) / 2;
+    const col = { x, z, hw: w / 2, hd: d / 2, c, s, h, minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez };
+    colliders.push(col); return col;
   };
+  const free = (x, z, pad = 0.5) => !colliders.some(c => x > c.minX - pad && x < c.maxX + pad && z > c.minZ - pad && z < c.maxZ + pad);
+  const onRoad = (x, z) => ROADS.some(r => Math.abs(x - r) < RH) || ROADS.some(r => Math.abs(z - r) < RH);
 
-  // ---------- textures ----------
-  const facade = canvasTex(128, 128, (g, w, h) => {
-    g.fillStyle = '#4a4850'; g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 900; i++) { const v = 50 + Math.random() * 40 | 0; g.fillStyle = `rgba(${v},${v},${v + 4},.35)`; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
-    g.fillStyle = 'rgba(20,18,22,.5)'; g.fillRect(0, 60, w, 4); g.fillRect(0, 124, w, 4);
+  // ---------------------------------------------------------------- textures
+  const brokenWin = (g, x, y) => {
+    g.fillStyle = '#0a090c'; g.fillRect(x, y, 36, 40);
+    g.fillStyle = 'rgba(150,160,175,.55)';
+    for (let k = 0; k < 4; k++) { g.beginPath(); const sx = x + (k % 2) * 36, sy = y + (k < 2 ? 0 : 40); g.moveTo(sx, sy); g.lineTo(sx + (k % 2 ? -1 : 1) * (6 + Math.random() * 12), sy); g.lineTo(sx, sy + (k < 2 ? 1 : -1) * (8 + Math.random() * 16)); g.fill(); }
+  };
+  const mkFacade = (bg, speck, extra) => canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 900; i++) { const v = speck + Math.random() * 40 | 0; g.fillStyle = `rgba(${v},${v - 4},${v - 6},.3)`; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
+    if (extra) extra(g, w, h);
     for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
       const x = 14 + c * 64, y = 10 + r * 64;
-      g.fillStyle = '#0c0b0e'; g.fillRect(x, y, 36, 40);
-      g.fillStyle = '#26232a'; g.fillRect(x - 3, y + 40, 42, 5);
-      if (Math.random() < .5) { g.strokeStyle = '#3a3840'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y + rnd() * 40); g.lineTo(x + 36, y + rnd() * 40); g.stroke(); }
+      g.fillStyle = '#26232a'; g.fillRect(x - 3, y - 3, 42, 46);
+      if (Math.random() < 0.35) brokenWin(g, x, y); else { g.fillStyle = '#0c0b0e'; g.fillRect(x, y, 36, 40); g.fillStyle = 'rgba(80,90,110,.18)'; g.fillRect(x + 2, y + 2, 14, 36); }
+      if (c === 1 && r === 0) { g.strokeStyle = '#3a3836'; g.lineWidth = 2; for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(x + k * 9, y); g.lineTo(x + k * 9, y + 40); g.stroke(); } }
+      g.fillStyle = 'rgba(15,12,14,.35)'; g.fillRect(x + 4, y + 44, 6, 10 + Math.random() * 20);
     }
-    // stains
-    for (let i = 0; i < 6; i++) { g.fillStyle = 'rgba(15,12,14,.28)'; g.fillRect(Math.random() * w, Math.random() * h * .6, 6 + Math.random() * 10, 30 + Math.random() * 60); }
+    for (let i = 0; i < 5; i++) { g.fillStyle = 'rgba(12,10,12,.25)'; g.fillRect(Math.random() * w, Math.random() * h * .6, 6 + Math.random() * 10, 30 + Math.random() * 60); }
   });
-  const facadeEm = canvasTex(128, 128, (g, w, h) => {
-    g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
-    // one lit (fire-lit) window per tile, deterministic-ish
-    g.fillStyle = '#7a3a12'; g.fillRect(14 + 64, 10, 36, 40);
-    g.fillStyle = '#3a1808'; g.fillRect(14, 74, 36, 40);
+  const facA = mkFacade('#4a4850', 50);
+  const facB = mkFacade('#5a3a30', 60, (g, w, h) => { g.strokeStyle = 'rgba(30,18,14,.5)'; g.lineWidth = 1; for (let y = 0; y < h; y += 4) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); for (let x = (y / 4 % 2) * 4; x < w; x += 8) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 4); g.stroke(); } } });
+  const facC = mkFacade('#8a8478', 110, (g, w, h) => { g.strokeStyle = 'rgba(60,58,52,.35)'; g.lineWidth = 1; for (let y = 0; y < h; y += 6) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); } for (let x = 0; x < w; x += 12) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); } });
+  const facadeEm = canvasTex(128, 128, (g, w, h) => { g.fillStyle = '#000'; g.fillRect(0, 0, w, h); g.fillStyle = '#7a3a12'; g.fillRect(14 + 64, 10, 36, 40); g.fillStyle = '#3a1808'; g.fillRect(14, 74, 36, 40); });
+  const shopTex = kind => canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#2a282c'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#1a181b'; g.fillRect(0, 0, w, 18);
+    const y0 = 18, hh = 104;
+    if (kind === 0) {
+      g.fillStyle = '#6a6a6e'; g.fillRect(6, y0, 116, hh); g.fillStyle = 'rgba(30,30,34,.6)'; for (let y = y0; y < y0 + hh; y += 4) g.fillRect(6, y, 116, 1);
+      g.fillStyle = 'rgba(70,40,30,.5)'; for (let i = 0; i < 20; i++) g.fillRect(6 + Math.random() * 116, y0 + Math.random() * hh, 2, 6 + Math.random() * 14);
+      g.font = 'bold 26px ' + FONT; g.fillStyle = 'rgba(190,30,40,.75)'; g.save(); g.translate(30, 80); g.rotate(-0.12); g.fillText('救命', 0, 0); g.restore();
+    } else if (kind === 1) {
+      g.fillStyle = '#0a0a0d'; g.fillRect(6, y0, 116, hh); g.fillStyle = '#3a3638'; g.fillRect(62, y0, 4, hh); g.fillRect(6, y0 + 70, 116, 3);
+      g.fillStyle = 'rgba(160,170,185,.5)'; for (let k = 0; k < 8; k++) { g.beginPath(); const x = 6 + Math.random() * 116, y = y0 + Math.random() * 30; g.moveTo(x, y); g.lineTo(x + 8 - Math.random() * 16, y + 10 + Math.random() * 30); g.lineTo(x + 6, y); g.fill(); }
+      g.fillStyle = 'rgba(60,40,30,.6)'; for (let i = 0; i < 12; i++) g.fillRect(10 + Math.random() * 100, y0 + 75 + Math.random() * 20, 6, 8);
+    } else {
+      g.fillStyle = '#121014'; g.fillRect(6, y0, 116, hh);
+      for (let i = 0; i < 7; i++) { g.save(); g.translate(64, y0 + 10 + i * 14); g.rotate((Math.random() - .5) * 0.25); g.fillStyle = `rgb(${80 + Math.random() * 30 | 0},${58 + Math.random() * 20 | 0},40)`; g.fillRect(-60, -5, 120, 10); g.restore(); }
+      g.fillStyle = 'rgba(200,190,170,.7)'; g.font = 'bold 18px ' + FONT; g.fillText('內有活人', 34, y0 + 60);
+    }
+  });
+  const signAtlas = canvasTex(1024, 384, (g) => {
+    const names = ['便利商店', '牛肉麵', '牙科診所', '五金行', '書局', '洗衣店', '檳榔', '早餐店', '眼鏡行', '手機維修', '茶行', '小吃部', '當舖', '電器行', '診所', '機車行'];
+    const cols = [['#c01818', '#fff'], ['#f0d020', '#a01010'], ['#ffffff', '#1a50a0'], ['#1a3a7a', '#fff'], ['#2a6a3a', '#fff'], ['#e8e8e8', '#2050c0'], ['#d02080', '#fff'], ['#f08a20', '#fff']];
+    for (let i = 0; i < 16; i++) {
+      const x = (i % 4) * 256, y = (i / 4 | 0) * 96, [bg, fg] = cols[i % cols.length];
+      g.fillStyle = bg; g.fillRect(x + 2, y + 2, 252, 92); g.fillStyle = 'rgba(0,0,0,.35)'; for (let k = 0; k < 40; k++) g.fillRect(x + Math.random() * 256, y + Math.random() * 96, 3 + Math.random() * 8, 2);
+      g.fillStyle = fg; g.font = `bold 52px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(names[i], x + 128, y + 50);
+      if (Math.random() < 0.4) { g.fillStyle = 'rgba(10,8,8,.7)'; g.beginPath(); g.moveTo(x + 180 + Math.random() * 60, y); g.lineTo(x + 256, y); g.lineTo(x + 256, y + 96); g.lineTo(x + 230, y + 96); g.fill(); }
+    }
   });
   const asphalt = canvasTex(512, 512, (g, w, h) => {
     g.fillStyle = '#29282d'; g.fillRect(0, 0, w, h);
-    // large tonal blotches
     for (let i = 0; i < 40; i++) { const v = 30 + Math.random() * 22 | 0; g.fillStyle = `rgba(${v},${v},${v + 4},.25)`; g.beginPath(); g.arc(Math.random() * w, Math.random() * h, 20 + Math.random() * 60, 0, 7); g.fill(); }
-    // aggregate grain
     for (let i = 0; i < 16000; i++) { const v = 22 + Math.random() * 48 | 0; g.fillStyle = `rgb(${v},${v},${v + 3})`; g.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 1.5, 1 + Math.random() * 1.5); }
-    // repair patches
     for (let i = 0; i < 4; i++) { g.fillStyle = 'rgba(18,18,22,.45)'; g.fillRect(Math.random() * w, Math.random() * h, 40 + Math.random() * 80, 30 + Math.random() * 60); }
-    // cracks (branching)
     g.strokeStyle = 'rgba(6,6,8,.85)';
     const crack = (x, y, a, len, wd) => { g.lineWidth = wd; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < len; k++) { a += (Math.random() - .5) * 0.9; x += Math.cos(a) * 9; y += Math.sin(a) * 9; g.lineTo(x, y); if (Math.random() < 0.12 && wd > 0.8) { g.stroke(); crack(x, y, a + (Math.random() < .5 ? 1 : -1), len / 2 | 0, wd * 0.6); g.lineWidth = wd; g.beginPath(); g.moveTo(x, y); } } g.stroke(); };
     for (let i = 0; i < 12; i++) crack(Math.random() * w, Math.random() * h, Math.random() * 7, 10 + Math.random() * 14 | 0, 1.6);
-    // oil stains
     for (let i = 0; i < 8; i++) { const x = Math.random() * w, y = Math.random() * h, r = 8 + Math.random() * 22; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(5,5,8,.55)'); gr.addColorStop(1, 'rgba(5,5,8,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
-    // light gravel specks
     for (let i = 0; i < 900; i++) { const v = 80 + Math.random() * 50 | 0; g.fillStyle = `rgba(${v},${v},${v},.5)`; g.fillRect(Math.random() * w, Math.random() * h, 1, 1); }
   });
-  asphalt.repeat.set(17, 17);
+  asphalt.repeat.set(30, 30);
+  const lotTex = asphalt.clone(); lotTex.repeat.set(1, 1); lotTex.needsUpdate = true;
   const splat = makeSplatTex();
   const concrete = canvasTex(64, 64, (g, w, h) => {
     g.fillStyle = '#4b4a4f'; g.fillRect(0, 0, w, h);
     for (let i = 0; i < 400; i++) { const v = 55 + Math.random() * 40 | 0; g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5); }
     g.fillStyle = '#2c2b30'; g.fillRect(0, 0, w, 2); g.fillRect(0, 0, 2, h);
   });
+  const paving = canvasTex(64, 64, (g, w, h) => {
+    g.fillStyle = '#56504c'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 3; x++) { const v = 70 + Math.random() * 25 | 0; g.fillStyle = `rgb(${v},${v - 6},${v - 10})`; g.fillRect(x * 32 + (y % 2) * 16 - 16 + 1, y * 16 + 1, 30, 14); }
+    for (let i = 0; i < 200; i++) { g.fillStyle = 'rgba(20,18,18,.3)'; g.fillRect(Math.random() * w, Math.random() * h, 1, 1); }
+  });
+  const stripeTex = canvasTex(64, 16, (g) => { g.fillStyle = '#d8d4c8'; g.fillRect(0, 0, 64, 16); for (let i = -1; i < 8; i += 2) { g.fillStyle = '#b01818'; g.beginPath(); g.moveTo(i * 8, 16); g.lineTo(i * 8 + 8, 0); g.lineTo(i * 8 + 16, 0); g.lineTo(i * 8 + 8, 16); g.fill(); } });
+  const fenceTex = canvasTex(64, 64, (g, w, h) => { g.clearRect(0, 0, w, h); g.strokeStyle = 'rgba(150,150,155,1)'; g.lineWidth = 2; for (let i = -64; i < 128; i += 10) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 64, 64); g.stroke(); g.beginPath(); g.moveTo(i + 64, 0); g.lineTo(i, 64); g.stroke(); } });
+  const grime = canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(110,90,75,${Math.random() * .12})`; g.beginPath(); g.arc(Math.random() * w, Math.random() * h, 2 + Math.random() * 7, 0, 7); g.fill(); }
+    g.strokeStyle = 'rgba(200,200,200,.6)'; g.lineWidth = 1; for (let i = 0; i < 18; i++) { g.beginPath(); const x = Math.random() * w, y = Math.random() * h; g.moveTo(x, y); g.lineTo(x + (Math.random() - .5) * 50, y + (Math.random() - .5) * 12); g.stroke(); }
+  });
+  const crackGlass = canvasTex(64, 64, (g, w, h) => {
+    g.fillStyle = '#121418'; g.fillRect(0, 0, w, h); g.strokeStyle = 'rgba(170,180,195,.38)'; g.lineWidth = 1;
+    const cx = 20 + Math.random() * 24, cy = 20 + Math.random() * 24;
+    for (let i = 0; i < 12; i++) { const a = i / 12 * 6.28 + Math.random() * .3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * 60, cy + Math.sin(a) * 60); g.stroke(); }
+    for (let r = 5; r < 22; r += 7) { g.beginPath(); g.arc(cx, cy, r, 0, 7); g.stroke(); }
+  });
+  const plates = makePlateAtlas();
 
-  mats.facade = new THREE.MeshLambertMaterial({ map: facade, emissiveMap: facadeEm, emissive: 0xffffff, emissiveIntensity: 0.32, color: 0x9a96a0 });
-  mats.facadeDark = new THREE.MeshLambertMaterial({ map: facade, color: 0x5d5a63 });
-  mats.concrete = new THREE.MeshLambertMaterial({ map: concrete, color: 0x8a8790 });
-  mats.rubble = new THREE.MeshLambertMaterial({ color: 0x3e3c42 });
-  mats.metal = new THREE.MeshLambertMaterial({ color: 0x2c2b30 });
-  mats.rust = new THREE.MeshLambertMaterial({ color: 0x4a2e22 });
-  mats.carRed = new THREE.MeshLambertMaterial({ color: 0x4a1a1c });
-  mats.carGrey = new THREE.MeshLambertMaterial({ color: 0x55545a });
-  mats.carBlue = new THREE.MeshLambertMaterial({ color: 0x222838 });
-  mats.glass = new THREE.MeshLambertMaterial({ color: 0x0b0c10 });
-  mats.tire = new THREE.MeshLambertMaterial({ color: 0x0c0c0d });
+  const L = (o) => new THREE.MeshLambertMaterial(o);
+  mats.facA = L({ map: facA, emissiveMap: facadeEm, emissive: 0xffffff, emissiveIntensity: 0.3, color: 0x9a96a0 });
+  mats.facB = L({ map: facB, emissiveMap: facadeEm, emissive: 0xffffff, emissiveIntensity: 0.22, color: 0x9a8a84 });
+  mats.facC = L({ map: facC, color: 0x8a867e });
+  mats.facD = L({ map: facA, color: 0x5d5a63 });
+  mats.shop0 = L({ map: shopTex(0), color: 0x9a96a0 }); mats.shop1 = L({ map: shopTex(1), color: 0x9a96a0 }); mats.shop2 = L({ map: shopTex(2), color: 0x9a96a0 });
+  mats.signs = L({ map: signAtlas, emissiveMap: signAtlas, emissive: 0xffffff, emissiveIntensity: 0.28, color: 0xa0a0a0 });
+  mats.concrete = L({ map: concrete, color: 0x8a8790 });
+  mats.sidewalk = L({ map: concrete, color: 0x6a6870 });
+  mats.curb = L({ color: 0x77757a });
+  mats.paving = L({ map: paving, color: 0x8a8480 });
+  mats.lot = L({ map: lotTex, color: 0x8a8690 });
+  mats.rubble = L({ color: 0x3e3c42 });
+  mats.metal = L({ color: 0x2c2b30 });
+  mats.rust = L({ color: 0x4a2e22 });
+  mats.trash = L({ color: 0x141316 }); mats.bag = L({ color: 0x0e0e10 });
+  mats.wood = L({ color: 0x4a3424 }); mats.crate = L({ color: 0x5a4430 });
+  mats.cone = L({ color: 0xb04a14, emissive: 0x200800 });
+  mats.white = L({ color: 0x9a9890 });
+  mats.paper = L({ color: 0x8a867a, side: THREE.DoubleSide });
+  mats.brick = L({ color: 0x5a3028 });
+  mats.can = L({ color: 0x2a3a2e });
+  mats.tireD = L({ color: 0x0c0c0d });
+  mats.acunit = L({ color: 0x8a8a86 });
+  mats.tank = L({ color: 0x9a9a9e });
+  mats.awning = L({ color: 0x4a1e1c, side: THREE.DoubleSide });
+  mats.awning2 = L({ color: 0x1e3a4a, side: THREE.DoubleSide });
+  mats.dumpster = L({ color: 0x1e3426 });
+  mats.sand = L({ color: 0x6a5a40 });
+  mats.bush = L({ color: 0x1e2618 });
+  mats.leaf = L({ color: 0x3a3020, side: THREE.DoubleSide });
+  mats.stripe = L({ map: stripeTex });
+  mats.fence = L({ map: fenceTex, alphaTest: 0.5, side: THREE.DoubleSide, color: 0x9a9aa0 });
+  mats.water = new THREE.MeshPhongMaterial({ color: 0x06080c, specular: 0x6a7090, shininess: 90 });
+  mats.statue = L({ color: 0x3a4a44 });
+  mats.gasRed = L({ color: 0x8a1414, emissive: 0x2a0404 });
+  mats.panelLit = new THREE.MeshBasicMaterial({ color: 0xd8e0e8 });
   mats.blood = new THREE.MeshBasicMaterial({ map: splat, color: 0x3a0407, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-  mats.line = new THREE.MeshBasicMaterial({ color: 0x5f5a48, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
-  mats.lamp = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
-  mats.ember = new THREE.MeshBasicMaterial({ color: 0xff6a20 });
-  mats.trash = new THREE.MeshLambertMaterial({ color: 0x141316 });
-  mats.wood = new THREE.MeshLambertMaterial({ color: 0x4a3424 });
-  mats.cone = new THREE.MeshLambertMaterial({ color: 0xb04a14, emissive: 0x200800 });
-  mats.white = new THREE.MeshLambertMaterial({ color: 0x9a9890 });
-  mats.paper = new THREE.MeshLambertMaterial({ color: 0x8a867a, side: THREE.DoubleSide });
-  mats.brick = new THREE.MeshLambertMaterial({ color: 0x5a3028 });
-  mats.can = new THREE.MeshLambertMaterial({ color: 0x2a3a2e });
-
-  // ---------- ground ----------
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(140, 140), new THREE.MeshLambertMaterial({ map: asphalt, color: 0x9a96a0 }));
-  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  mats.line = new THREE.MeshBasicMaterial({ color: 0x6a6450, transparent: true, opacity: 0.6, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  mats.lineY = new THREE.MeshBasicMaterial({ color: 0x8a6a20, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  mats.puddle = new THREE.MeshPhongMaterial({ color: 0x0c0d14, specular: 0x8888a0, shininess: 120, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+  // vehicles
+  mats.paint = new THREE.MeshPhongMaterial({ vertexColors: true, map: grime, shininess: 60, specular: 0x3a3a44 });
+  mats.glass = new THREE.MeshPhongMaterial({ color: 0x07080b, specular: 0x9098b0, shininess: 110 });
+  mats.glassBroken = new THREE.MeshPhongMaterial({ map: crackGlass, color: 0x9aa0aa, specular: 0x606878, shininess: 60 });
+  mats.chrome = new THREE.MeshPhongMaterial({ color: 0x8a8a90, specular: 0xffffff, shininess: 80 });
+  mats.rim = new THREE.MeshPhongMaterial({ color: 0x55565c, specular: 0x8a8a90, shininess: 50 });
+  mats.tire = L({ color: 0x0d0d0e });
+  mats.carDark = L({ color: 0x0f0f11 });
+  mats.bumper = L({ color: 0x1c1c1f });
+  mats.headL = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
+  mats.headF = new THREE.MeshBasicMaterial({ color: 0xfff0c8, transparent: true });
+  mats.lightOff = new THREE.MeshPhongMaterial({ color: 0x6a6a64, specular: 0xffffff, shininess: 90 });
+  mats.tailL = new THREE.MeshBasicMaterial({ color: 0xd01010 });
+  mats.tailOff = new THREE.MeshPhongMaterial({ color: 0x4a0808, specular: 0x804040, shininess: 60 });
+  mats.plate = L({ map: plates });
+  mats.signEm = new THREE.MeshBasicMaterial({ map: plates });
+  mats.sirenR = new THREE.MeshBasicMaterial({ color: 0xff2020 });
+  mats.sirenB = new THREE.MeshBasicMaterial({ color: 0x2050ff });
+  mats.lampOff = L({ color: 0x3a3a3c });
+  mats.vc = L({ vertexColors: true }); mats.vcD = mats.vc;
+  mats.vc2 = L({ vertexColors: true, side: THREE.DoubleSide }); mats.vc2D = mats.vc2;
+  mats.vcB = new THREE.MeshBasicMaterial({ vertexColors: true });
 
   const box1 = new THREE.BoxGeometry(1, 1, 1);
-  // sidewalks along the cross streets
-  const swGeo = tiledBox(1, 1, 1, 1);
-  for (const s of [-1, 1]) {
-    add(swGeo, 'concrete', s * 8.2, 0.08, 0, 0, 0, 0, 2.4, 0.16, 140);
-    add(swGeo, 'concrete', 0, 0.08, s * 8.2, 0, 0, 0, 140, 0.16, 2.4);
-  }
-  // road dashed lines
-  const lineGeo = new THREE.PlaneGeometry(1, 1); lineGeo.rotateX(-Math.PI / 2);
-  for (let i = -40; i < 40; i += 4) {
-    if (Math.abs(i) > 8) { add(lineGeo, 'line', 0, 0.02, i, 0, 0, 0, 0.18, 1, 2); add(lineGeo, 'line', i, 0.02, 0, 0, 0, 0, 2, 1, 0.18); }
-  }
-  // crosswalk
-  for (let k = -3; k <= 3; k++) { add(lineGeo, 'line', k * 1.2, 0.02, 7.5, 0, 0, 0, 0.6, 1, 2.2); add(lineGeo, 'line', -7.5, 0.02, k * 1.2, 0, 0, 0, 2.2, 1, 0.6); }
+  const plane = new THREE.PlaneGeometry(1, 1); const flat = plane.clone(); flat.rotateX(-PI / 2);
 
-  // ---------- buildings ----------
+  // ---------------------------------------------------------------- ground
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 260), L({ map: asphalt, color: 0x9a96a0 }));
+  ground.rotation.x = -PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+  // ---------------------------------------------------------------- blocks: sidewalks, curbs
+  const blocks = [];
+  for (const [x0, x1] of SPANS) for (const [z0, z1] of SPANS) blocks.push({ x0, x1, z0, z1, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 });
+  const slab = (x0, x1, z0, z1, key) => { const w = x1 - x0, d = z1 - z0; add(tiledBox(w, 0.1, d, key === 'lot' ? 24 : key === 'paving' ? 2 : 1.5), key, (x0 + x1) / 2, 0.05, (z0 + z1) / 2); };
+  for (const b of blocks) {
+    const x0 = b.x0 === -84 ? -110 : b.x0, x1 = b.x1 === 84 ? 110 : b.x1, z0 = b.z0 === -84 ? -110 : b.z0, z1 = b.z1 === 84 ? 110 : b.z1;
+    b.special = (b.x0 === 9 && b.z0 === -47) ? 'plaza' : (b.x0 === -47 && b.z0 === 9) ? 'gas' : null;
+    if (b.special === 'plaza') { slab(x0, 28, z0, z1, 'paving'); slab(28, x1, z0, z1, 'lot'); }
+    else slab(x0, x1, z0, z1, 'sidewalk');
+    const curb = (x, z, w, d) => add(box1, 'curb', x, 0.07, z, 0, 0, 0, w, 0.14, d);
+    if (b.x0 > -84) curb(b.x0 + 0.1, (z0 + z1) / 2, 0.2, z1 - z0);
+    if (b.x1 < 84) curb(b.x1 - 0.1, (z0 + z1) / 2, 0.2, z1 - z0);
+    if (b.z0 > -84) curb((x0 + x1) / 2, b.z0 + 0.1, x1 - x0, 0.2);
+    if (b.z1 < 84) curb((x0 + x1) / 2, b.z1 - 0.1, x1 - x0, 0.2);
+    mapRects.push({ x: b.cx, z: b.cz, w: b.w, d: b.d, rot: 0, kind: b.special === 'plaza' ? 'p' : 'blk' });
+  }
+  // ---------------------------------------------------------------- road markings
+  for (const r of ROADS) {
+    for (let t = -108; t < 108; t += 4) {
+      if (ROADS.some(q => Math.abs(t - q) < 10)) continue;
+      if (r === 0) { add(flat, 'lineY', r - 0.12, 0.02, t, 0, 0, 0, 0.12, 1, 2); add(flat, 'lineY', r + 0.12, 0.02, t, 0, 0, 0, 0.12, 1, 2); add(flat, 'lineY', t, 0.02, r - 0.12, 0, 0, 0, 2, 1, 0.12); add(flat, 'lineY', t, 0.02, r + 0.12, 0, 0, 0, 2, 1, 0.12); }
+      else { add(flat, 'line', r, 0.02, t, 0, 0, 0, 0.14, 1, 2); add(flat, 'line', t, 0.02, r, 0, 0, 0, 2, 1, 0.14); }
+    }
+    for (const q of ROADS) {
+      for (let k = -5; k <= 5; k++) for (const s of [-1, 1]) {
+        add(flat, 'line', r + k * 1.08, 0.021, q + s * 7.6, 0, 0, 0, 0.55, 1, 2.4);
+        add(flat, 'line', q + s * 7.6, 0.021, r + k * 1.08, 0, 0, 0, 2.4, 1, 0.55);
+      }
+      for (const s of [-1, 1]) { add(flat, 'line', r + s * 3, 0.021, q + s * 9.3, 0, 0, 0, 6, 1, 0.3); add(flat, 'line', q - s * 9.3, 0.021, r + s * 3, 0, 0, 0, 0.3, 1, 6); }
+    }
+  }
+
+  // ---------------------------------------------------------------- buildings
   const buildings = [];
-  const B = (x, z, w, d, h, ruined) => buildings.push({ x, z, w, d, h, ruined });
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    B(sx * 15.5, sz * 15, rr(9, 11), rr(8, 10), rr(10, 18), rnd() < 0.5);
-    B(sx * rr(29, 32), sz * rr(12, 15), rr(7, 9), rr(8, 11), rr(7, 13), rnd() < 0.6);
-    B(sx * rr(15, 18), sz * rr(30, 33), rr(9, 12), rr(7, 9), rr(12, 20), rnd() < 0.4);
-  }
-  // backdrop ring beyond bounds (no gameplay collision needed but add anyway)
-  for (let i = 0; i < 28; i++) {
-    const a = (i / 28) * Math.PI * 2, r = rr(46, 54);
-    const x = Math.sin(a) * r, z = Math.cos(a) * r;
-    if (Math.abs(x) < 9 || Math.abs(z) < 9) { // street ends: push farther, make them shorter ruins
-      B(x * 1.25, z * 1.25, rr(10, 14), rr(10, 14), rr(6, 14), true);
-    } else B(x, z, rr(10, 16), rr(10, 16), rr(14, 32), rnd() < 0.5);
-  }
-  const bGeoCache = (w, h, d) => tiledBox(w, h, d, 4);
-  for (const b of buildings) {
-    const key = rnd() < 0.7 ? 'facade' : 'facadeDark';
-    add(bGeoCache(b.w, b.h, b.d), key, b.x, b.h / 2, b.z);
-    if (b.ruined) {
-      // jagged broken top
-      for (let k = 0; k < 4; k++) {
-        const w = rr(1.5, b.w * 0.5), d = rr(1.5, b.d * 0.5), hh = rr(1, 4);
-        add(bGeoCache(w, hh, d), key, b.x + rr(-b.w, b.w) * 0.3, b.h + hh / 2 - 0.3, b.z + rr(-b.d, b.d) * 0.3, rr(-.2, .2), rr(-.15, .15), rr(-.15, .15));
-      }
-      // rubble at base
-      for (let k = 0; k < 8; k++) {
-        const s = rr(0.4, 1.6);
-        const side = rnd() < 0.5;
-        const px = b.x + (side ? (rnd() < .5 ? -1 : 1) * (b.w / 2 + rr(0.2, 1.5)) : rr(-b.w / 2, b.w / 2));
-        const pz = b.z + (!side ? (rnd() < .5 ? -1 : 1) * (b.d / 2 + rr(0.2, 1.5)) : rr(-b.d / 2, b.d / 2));
-        add(box1, 'rubble', px, s * 0.3, pz, rr(0, 3), rr(-.4, .4), rr(-.4, .4), s, s * 0.6, s * 0.8);
+  const facKeys = ['facA', 'facA', 'facB', 'facC', 'facD'];
+  let signIdx = 0;
+  const signGeo = (slot) => { const g = new THREE.PlaneGeometry(1, 1); const col = slot % 4, row = slot / 4 | 0, uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, (col + uv.getX(i)) / 4, 1 - (row + 1 - uv.getY(i)) / 4); return g; };
+  const tankGeo = new THREE.CylinderGeometry(0.6, 0.6, 1.4, 10);
+  // faces: subset of 'x-','x+','z-','z+' that face streets (shopfronts + signs + AC units)
+  const building = (x0, x1, z0, z1, h, faces, opt = {}) => {
+    const w = x1 - x0, d = z1 - z0, x = (x0 + x1) / 2, z = (z0 + z1) / 2;
+    const fk = opt.fac || pick(facKeys);
+    const ruined = opt.ruined ?? rnd() < 0.22;
+    const gf = 3.6, shop = faces.length > 0;
+    if (shop) {
+      add(tiledBox(w, gf, d, 4, 4), pick(['shop0', 'shop1', 'shop2', 'shop0', 'shop1']), x, gf / 2, z);
+      add(tiledBox(w, h - gf, d, 6, 6), fk, x, gf + (h - gf) / 2, z);
+      add(box1, 'metal', x, gf + 0.05, z, 0, 0, 0, w + 0.3, 0.12, d + 0.3);
+    } else add(tiledBox(w, h, d, 6, 6), fk, x, h / 2, z);
+    for (const f of faces) {
+      const along = f[0] === 'x' ? d : w, sgn = f[1] === '+' ? 1 : -1;
+      const n = Math.max(1, Math.floor(along / 7));
+      const ry = f[0] === 'x' ? sgn * PI / 2 : (sgn > 0 ? 0 : PI);
+      for (let i = 0; i < n; i++) {
+        const t = -along / 2 + along * (i + 0.5) / n;
+        const px = f[0] === 'x' ? x + sgn * (w / 2 + 0.05) : x + t, pz = f[0] === 'x' ? z + t : z + sgn * (d / 2 + 0.05);
+        if (rnd() < 0.85) add(signGeo(signIdx++ % 16), 'signs', px, gf - 0.45, pz, ry, 0, rnd() < 0.15 ? rr(-.25, .25) : 0, 3.2, 0.9, 1);
+        if (rnd() < 0.45) {
+          const ax = f[0] === 'x' ? x + sgn * (w / 2 + 0.7) : px, az = f[0] === 'x' ? pz : z + sgn * (d / 2 + 0.7);
+          add(box1, rnd() < .5 ? 'awning' : 'awning2', ax, gf - 1.05, az, ry, -0.35, 0, 3.0, 0.05, 1.5);
+        }
+        for (let fl = 0; fl < Math.min(4, (h - gf) / 3 | 0); fl++) {
+          if (rnd() < 0.5) continue;
+          const yy = gf + 1.0 + fl * 3, off = rr(-1.5, 1.5);
+          const qx = f[0] === 'x' ? x + sgn * (w / 2 + 0.25) : px + off, qz = f[0] === 'x' ? pz + off : z + sgn * (d / 2 + 0.25);
+          if (rnd() < 0.6) add(box1, 'acunit', qx, yy, qz, ry, 0, 0, 0.8, 0.55, 0.45);
+          else {
+            const bx = f[0] === 'x' ? x + sgn * (w / 2 + 0.45) : qx, bz = f[0] === 'x' ? qz : z + sgn * (d / 2 + 0.45);
+            add(box1, 'concrete', bx, yy - 0.6, bz, ry, 0, 0, 2.4, 0.12, 0.9);
+            const rx2 = f[0] === 'x' ? x + sgn * (w / 2 + 0.88) : qx, rz2 = f[0] === 'x' ? qz : z + sgn * (d / 2 + 0.88);
+            add(box1, 'metal', rx2, yy - 0.1, rz2, ry, 0, 0, 2.4, 0.9, 0.04);
+          }
+        }
       }
     }
-    // rooftop details
-    add(box1, 'metal', b.x + rr(-1, 1), b.h + 0.6, b.z + rr(-1, 1), 0, 0, 0, 1.6, 1.2, 1.2);
-    addCollider(b.x, b.z, b.w, b.d, 0, b.h);
-    mapRects.push({ x: b.x, z: b.z, w: b.w, d: b.d, rot: 0, kind: 'b' });
+    if (ruined) {
+      for (let k = 0; k < 4; k++) { const ww = rr(1.5, w * 0.5), dd = rr(1.5, d * 0.5), hh = rr(1, 4); add(tiledBox(ww, hh, dd, 6), fk, x + rr(-w, w) * 0.3, h + hh / 2 - 0.3, z + rr(-d, d) * 0.3, rr(-.2, .2), rr(-.15, .15), rr(-.15, .15)); }
+      for (let k = 0; k < 6; k++) { const s = rr(0.4, 1.4), side = rnd() < 0.5; const px = x + (side ? (rnd() < .5 ? -1 : 1) * (w / 2 + rr(0.2, 1.0)) : rr(-w / 2, w / 2)); const pz = z + (!side ? (rnd() < .5 ? -1 : 1) * (d / 2 + rr(0.2, 1.0)) : rr(-d / 2, d / 2)); add(box1, 'rubble', px, s * 0.3, pz, rr(0, 3), rr(-.4, .4), rr(-.4, .4), s, s * 0.6, s * 0.8); }
+    } else {
+      for (let k = 0; k < 1 + (rnd() * 2 | 0); k++) add(tankGeo, 'tank', x + rr(-w / 3, w / 3), h + 0.9, z + rr(-d / 3, d / 3));
+      add(box1, 'concrete', x + rr(-w / 4, w / 4), h + 1.1, z + rr(-d / 4, d / 4), 0, 0, 0, 2.2, 2.2, 2.4);
+      add(box1, 'metal', x, h + 0.25, z - d / 2 + 0.1, 0, 0, 0, w, 0.5, 0.15); add(box1, 'metal', x, h + 0.25, z + d / 2 - 0.1, 0, 0, 0, w, 0.5, 0.15);
+    }
+    addCollider(x, z, w, d, 0, h);
+    mapRects.push({ x, z, w, d, rot: 0, kind: 'b' });
+    buildings.push({ x, z, w, d, h, x0, x1, z0, z1 });
+  };
+  const facesFor = (x0, x1, z0, z1, b) => {
+    const f = [];
+    if (Math.abs(x0 - (b.x0 + SWW)) < 0.1 && b.x0 > -84) f.push('x-');
+    if (Math.abs(x1 - (b.x1 - SWW)) < 0.1 && b.x1 < 84) f.push('x+');
+    if (Math.abs(z0 - (b.z0 + SWW)) < 0.1 && b.z0 > -84) f.push('z-');
+    if (Math.abs(z1 - (b.z1 - SWW)) < 0.1 && b.z1 < 84) f.push('z+');
+    return f;
+  };
+  const alleys = [];
+  const cityBlock = (b, opts = {}) => {
+    const ix0 = b.x0 > -84 ? b.x0 + SWW : b.x0, ix1 = b.x1 < 84 ? b.x1 - SWW : b.x1;
+    const iz0 = b.z0 > -84 ? b.z0 + SWW : b.z0, iz1 = b.z1 < 84 ? b.z1 - SWW : b.z1;
+    const ax = (ix0 + ix1) / 2 + rr(-3, 3), az = (iz0 + iz1) / 2 + rr(-3, 3), AW = 2.2;
+    const splitX = (ix1 - ix0) > 24, splitZ = (iz1 - iz0) > 24;
+    const xs = splitX ? [[ix0, ax - AW], [ax + AW, ix1]] : [[ix0, ix1]];
+    const zs = splitZ ? [[iz0, az - AW], [az + AW, iz1]] : [[iz0, iz1]];
+    if (splitX) alleys.push({ x0: ax - AW, x1: ax + AW, z0: iz0, z1: iz1 });
+    if (splitZ) alleys.push({ x0: ix0, x1: ix1, z0: az - AW, z1: az + AW });
+    for (const [x0, x1] of xs) for (const [z0, z1] of zs) {
+      if (opts.skip && opts.skip(x0, x1, z0, z1)) continue;
+      const wide = (x1 - x0) >= (z1 - z0), len = wide ? x1 - x0 : z1 - z0;
+      const cuts = len > 12 && rnd() < 0.75 ? [0, rr(0.4, 0.6), 1] : [0, 1];
+      for (let i = 0; i < cuts.length - 1; i++) {
+        let a0 = cuts[i] * len; const a1 = cuts[i + 1] * len; if (i > 0) a0 += 0.6;
+        const bx0 = wide ? x0 + a0 : x0, bx1 = wide ? x0 + a1 : x1, bz0 = wide ? z0 : z0 + a0, bz1 = wide ? z1 : z0 + a1;
+        const edge = b.x0 === -84 || b.x1 === 84 || b.z0 === -84 || b.z1 === 84;
+        building(bx0, bx1, bz0, bz1, edge ? rr(12, 26) : rr(8, 20), facesFor(bx0, bx1, bz0, bz1, b));
+      }
+    }
+  };
+  function ruinLot(x0, x1, z0, z1) {
+    const x = (x0 + x1) / 2, z = (z0 + z1) / 2, w = x1 - x0, d = z1 - z0;
+    add(tiledBox(w, 4.5, 0.4, 6), 'facD', x, 2.25, z1 - 0.2, 0, 0, 0.04); addCollider(x, z1 - 0.2, w, 0.4, 0, 4.5);
+    add(tiledBox(0.4, 6, d * 0.6, 6), 'facD', x1 - 0.2, 3, z + d * 0.2); addCollider(x1 - 0.2, z + d * 0.2, 0.4, d * 0.6, 0, 6);
+    add(tiledBox(w * 0.4, 2.2, 0.4, 6), 'facD', x0 + w * 0.2, 1.1, z0 + 0.2, 0, 0, -0.06); addCollider(x0 + w * 0.2, z0 + 0.2, w * 0.4, 0.4, 0, 2.2);
+    for (let k = 0; k < 6; k++) { const s = rr(1.2, 2.6), px = x + rr(-w / 3, w / 3), pz = z + rr(-d / 3, d / 3); add(box1, 'rubble', px, s * 0.3, pz, rr(0, 3), rr(-.3, .3), rr(-.3, .3), s, s * 0.6, s); addCollider(px, pz, s * 0.8, s * 0.8, 0, s * 0.5); }
+    for (let k = 0; k < 30; k++) { const s = rr(0.2, 0.7); add(box1, 'rubble', x + rr(-w / 2, w / 2), s * 0.2, z + rr(-d / 2, d / 2), rr(0, 3), rr(-.5, .5), rr(-.5, .5), s, s * 0.5, s * 0.8); }
+    for (let k = 0; k < 5; k++) add(box1, 'metal', x + rr(-w / 3, w / 3), rr(0.3, 1.5), z + rr(-d / 3, d / 3), rr(0, 3), rr(-.8, .8), rr(-.8, .8), 0.12, 0.12, rr(2, 4));
+    mapRects.push({ x, z, w, d, rot: 0, kind: 'r' });
+  }
+  for (const b of blocks) {
+    if (b.special === 'plaza') continue;
+    if (b.special === 'gas') { cityBlock(b, { skip: (x0, x1) => x1 > -30 }); continue; }
+    if (b.x0 === 9 && b.z0 === 9) {
+      let first = true;
+      cityBlock(b, { skip: (x0, x1, z0, z1) => { if (first && x0 > 20 && z0 > 20) { first = false; ruinLot(x0, x1, z0, z1); return true; } return false; } });
+      continue;
+    }
+    cityBlock(b);
+  }
+  // backdrop beyond the bounds at road ends (visual only)
+  for (const r of ROADS) for (const s of [-1, 1]) for (const [px, pz] of [[r, s * 104], [s * 104, r]]) { const h = rr(10, 26); add(tiledBox(14, h, 14, 6), 'facD', px, h / 2, pz); }
+
+  // ---------------------------------------------------------------- props: helpers
+  const jerseyGeo = (() => {
+    const s = new THREE.Shape(); const p = [[-0.3, 0], [0.3, 0], [0.3, 0.08], [0.12, 0.3], [0.08, 0.82], [-0.08, 0.82], [-0.12, 0.3], [-0.3, 0.08]];
+    s.moveTo(p[0][0], p[0][1]); p.slice(1).forEach(q => s.lineTo(q[0], q[1])); s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, { depth: 2.9, bevelEnabled: false }); g.translate(0, 0, -1.45); g.rotateY(PI / 2);
+    const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.6, uv.getY(i) * 0.6);
+    return g;
+  })();
+  const jersey = (x, z, ry, mk = true) => { add(jerseyGeo, 'concrete', x, 0, z, ry); if (rnd() < 0.5) add(flat, 'stripe', x, 0.835, z, ry, 0, 0, 2.6, 1, 0.14); addCollider(x, z, 2.9, 0.6, ry, 0.85); if (mk) mapRects.push({ x, z, w: 2.9, d: 0.6, rot: ry, kind: 'c' }); };
+  const sandbagGeo = new THREE.SphereGeometry(0.5, 7, 5);
+  const sandbags = (x, z, ry, n = 4) => {
+    const c = Math.cos(ry), s = Math.sin(ry);
+    for (let row = 0; row < 3; row++) for (let i = 0; i < n - (row === 2 ? 1 : 0); i++) {
+      const t = (i - (n - 1) / 2) * 0.62 + (row % 2) * 0.3;
+      add(sandbagGeo, 'sand', x + c * t, 0.13 + row * 0.24, z - s * t, ry + rr(-.1, .1), 0, 0, 0.66, 0.28, 0.4);
+    }
+    addCollider(x, z, n * 0.62, 0.5, ry, 0.75); mapRects.push({ x, z, w: n * 0.62, d: 0.5, rot: ry, kind: 'c' });
+  };
+  const sawhorse = (x, z, ry) => {
+    const c = Math.cos(ry), s = Math.sin(ry);
+    add(box1, 'stripe', x, 0.85, z, ry, 0, 0, 1.8, 0.22, 0.05);
+    for (const t of [-0.75, 0.75]) for (const k of [-1, 1]) add(box1, 'wood', x + c * t + s * k * 0.15, 0.42, z - s * t + c * k * 0.15, ry, k * 0.3, 0, 0.06, 0.9, 0.06);
+    addCollider(x, z, 1.8, 0.4, ry, 0.9);
+  };
+  const fence = (x, z, len, ry) => {
+    const g = plane.clone(); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len / 1.2, uv.getY(i) * 2.2 / 1.2);
+    add(g, 'fence', x, 1.1, z, ry, 0, 0, len, 2.2, 1);
+    const c = Math.cos(ry), s = Math.sin(ry);
+    for (let t = -len / 2; t <= len / 2 + 0.01; t += 2.5) add(box1, 'metal', x + c * t, 1.15, z - s * t, 0, 0, 0, 0.07, 2.3, 0.07);
+    addCollider(x, z, len, 0.15, ry, 2.2); mapRects.push({ x, z, w: len, d: 0.15, rot: ry, kind: 'c' });
+  };
+  const dumpster = (x, z, ry) => { add(box1, 'dumpster', x, 0.6, z, ry, 0, 0, 1.9, 1.15, 1.1); add(box1, 'dumpster', x, 1.22, z, ry, rnd() < .5 ? -0.5 : 0, 0, 1.95, 0.06, 1.15); addCollider(x, z, 1.9, 1.1, ry, 1.25); mapRects.push({ x, z, w: 1.9, d: 1.1, rot: ry, kind: 'c' }); };
+
+  // ---------------------------------------------------------------- vehicles
+  const carInfo = [], fires = [], neons = [];
+  const flameGeo = new THREE.ConeGeometry(0.28, 0.9, 9, 1, true);
+  const flameTex = canvasTex(64, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    for (let k = 0; k < 7; k++) { // licking tongues: vertical gradient strips
+      const x = k * 9 + Math.random() * 4, top = 10 + Math.random() * 50;
+      const gr = g.createLinearGradient(0, h, 0, top); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.55, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.beginPath(); g.moveTo(x - 6, h); g.quadraticCurveTo(x - 4 + Math.random() * 8, (h + top) / 2, x + 3, top); g.quadraticCurveTo(x + 8, (h + top) / 2, x + 12, h); g.fill();
+    }
+  }, false);
+  const flameMat = new THREE.MeshBasicMaterial({ map: flameTex, color: 0xff6a20, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const flameMat2 = new THREE.MeshBasicMaterial({ map: flameTex, color: 0xffc860, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const glowT = glowTexW();
+  const fireGlowMat = new THREE.SpriteMaterial({ map: glowT, color: 0xff7a30, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const addFire = (x, y, z, big = false) => {
+    let f1;
+    if (big) { // cluster of tongues spread over the car
+      f1 = new THREE.Group(); f1.position.set(x, y + 0.45, z);
+      for (let k = 0; k < 5; k++) { const m = new THREE.Mesh(flameGeo, flameMat); m.position.set(rr(-0.7, 0.7), rr(0, 0.2), rr(-0.5, 0.5)); m.scale.set(rr(1.2, 2.0), rr(1.0, 1.8), rr(1.2, 2.0)); m.rotation.y = rr(0, 6); m.position.y += 0.45 * m.scale.y; f1.add(m); }
+      scene.add(f1);
+    } else { f1 = new THREE.Mesh(flameGeo, flameMat); f1.position.set(x, y + 0.4, z); scene.add(f1); }
+    const f2 = new THREE.Mesh(flameGeo, flameMat2); f2.position.set(x, y + 0.25, z); f2.scale.setScalar(big ? 1.4 : 0.6); scene.add(f2);
+    const fg = new THREE.Sprite(fireGlowMat); fg.position.set(x, y + 0.5, z); fg.scale.setScalar(big ? 5 : 2.4); scene.add(fg);
+    fires.push({ x, z, y, f1, f2, light: null, ph: rnd() * 10, big });
+    mapRects.push({ x, z, w: big ? 1.6 : 0.8, d: big ? 1.6 : 0.8, rot: 0, kind: 'f' });
+  };
+  const headGlowMat = new THREE.SpriteMaterial({ map: glowT, color: 0xfff0c8, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false });
+  const beamTex = canvasTex(64, 128, (g, w, h) => { const gr = g.createLinearGradient(0, h, 0, 0); gr.addColorStop(0, 'rgba(255,240,200,.9)'); gr.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = gr; g.beginPath(); g.moveTo(w * 0.35, h); g.lineTo(w * 0.65, h); g.lineTo(w, 0); g.lineTo(0, 0); g.fill(); });
+  const PALETTE = [0x8a8d92, 0xc8c8c4, 0x1a1b1e, 0x1f2a44, 0x5a1a1e, 0x22382c, 0xa89a7a, 0x55585e, 0x8a1c1c, 0x2a3a5a, 0x6a6458];
+  const placeCar = (type, x, z, ry, o = {}) => {
+    const opts = { seed: (rnd() * 1000) | 0, color: o.color ?? (type === 'police' || type === 'ambulance' ? 0xdcdcd8 : type === 'taxi' ? 0xc8a020 : type === 'bus' ? 0x8a8a84 : pick(PALETTE)), rust: o.rust ?? rr(0.05, 0.45), ...o };
+    if (o.random !== false && !o.burnt) {
+      if (opts.broken === undefined) opts.broken = rnd() < 0.45;
+      if (opts.crashed === undefined) opts.crashed = rnd() < 0.3;
+      if (opts.flat === undefined && rnd() < 0.35) opts.flat = [rnd() * 4 | 0];
+      if (opts.doorOpen === undefined && rnd() < 0.2 && type !== 'bus' && type !== 'van' && type !== 'ambulance') opts.doorOpen = rnd() < .5 ? 1 : -1;
+    }
+    const car = buildCar(type, opts);
+    const roll = o.roll || 0;
+    const lean = opts.flat && opts.flat.length && !roll ? 0.035 * (opts.flat[0] % 2 ? -1 : 1) : 0;
+    _m.compose(_v.set(x, roll === PI ? car.H + 0.02 : roll ? car.W / 2 : 0, z), _q.setFromEuler(_e.set(roll || lean, ry, 0, 'YXZ')), _s.set(1, 1, 1));
+    for (const p of car.parts) { p.g.applyMatrix4(_m); pushGeo(p.g, p.m, x, z); }
+    const h = roll === PI ? car.H : roll ? car.W : car.H, cw = roll && roll !== PI ? car.H : car.W;
+    addCollider(x, z, car.L, cw, ry, Math.min(h, 2.2));
+    mapRects.push({ x, z, w: car.L, d: cw, rot: ry, kind: 'v' });
+    carInfo.push({ type, x, z, ry, L: car.L, W: car.W, H: car.H, burnt: !!opts.burnt, roll });
+    const fx = Math.cos(ry), fz = -Math.sin(ry);
+    if (opts.burnt && o.fire !== false) addFire(x + fx * car.L * 0.2, roll === PI ? 0.4 : 0.7, z + fz * car.L * 0.2, true);
+    if (opts.lights && !roll) {
+      const hx = car.L / 2 + 0.1, mat = opts.lights === 'flicker' ? headGlowMat.clone() : headGlowMat;
+      for (const s of [-1, 1]) { const sp = new THREE.Sprite(mat); sp.position.set(x + fx * hx + Math.sin(ry) * s * car.W * 0.33, car.H < 2 ? 0.75 : 0.95, z + fz * hx + Math.cos(ry) * s * car.W * 0.33); sp.scale.setScalar(1.1); scene.add(sp); }
+      const bm = new THREE.MeshBasicMaterial({ map: beamTex, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false });
+      const bg = new THREE.PlaneGeometry(3.4, 7); bg.rotateX(-PI / 2);
+      const beam = new THREE.Mesh(bg, bm); beam.rotation.y = ry - PI / 2; beam.position.set(x + fx * (hx + 3.5), 0.04, z + fz * (hx + 3.5)); beam.renderOrder = 1; scene.add(beam);
+      if (opts.lights === 'flicker') neons.push({ mat: mats.headF, ph: rnd() * 9, mode: 'stutter' }, { mat, ph: 2, mode: 'stutter', max: 0.6 }, { mat: bm, ph: 2, mode: 'stutter', max: 0.18 });
+    }
+    return car;
+  };
+  // checkpoint on the north road (x=0, z≈-40): police, ambulance, barriers
+  placeCar('police', -2.8, -38, 0.35, { lights: 'flicker', random: false, broken: true, doorOpen: 1, rust: 0.05 });
+  placeCar('police', 3.4, -41.5, PI - 0.5, { random: false, rust: 0.08, tail: true });
+  placeCar('ambulance', -1.5, -45.5, PI / 2 + 0.2, { random: false, broken: true, rust: 0.1, lights: true });
+  for (const xx of [-4.6, -1.6, 1.4]) jersey(xx, -33.5, rr(-.08, .08));
+  sandbags(4.4, -33.8, 0.1, 4); sawhorse(-5.0, -30.5, 0.3);
+  // central intersection: pile-up + burning car
+  placeCar('sedan', -3.6, 13.5, 0.2, { burnt: true, random: false });
+  placeCar('taxi', 4.2, -12.6, PI + 0.4, { crashed: true, broken: true });
+  placeCar('suv', 13.5, 3.2, 1.6, { flat: [0, 2], broken: true });
+  placeCar('hatch', -14.5, -3.4, -1.3, { roll: PI, random: false, broken: true });
+  // crashed bus across the east road
+  placeCar('bus', 30, 1.0, 0.25, { random: false, broken: true, crashed: true, rust: 0.35, flat: [1] });
+  placeCar('van', -30, -2.5, PI - 0.15, { roll: PI / 2, random: false, broken: true });
+  // road-end barricades at the map bounds
+  for (const r of ROADS) for (const s of [-1, 1]) {
+    for (const [ax, az, ry] of [[r, s * 82.5, 0], [s * 82.5, r, PI / 2]]) {
+      for (let t = -5; t <= 5; t += 3.2) { const px = ry ? ax : ax + t, pz = ry ? az + t : az; jersey(px, pz, ry + rr(-.1, .1), false); }
+      fence(ry ? ax + s * 1.2 : ax, ry ? az : az + s * 1.2, 12.5, ry);
+      if (rnd() < 0.6) placeCar(pick(['sedan', 'suv', 'van', 'pickup']), ry ? ax - s * 3.6 : ax + rr(-2.5, 2.5), ry ? az + rr(-2.5, 2.5) : az - s * 3.6, ry ? rr(-.5, .5) : PI / 2 + rr(-.5, .5), { crashed: true });
+    }
+  }
+  // parked / abandoned cars along curbs and in lanes
+  const types = ['sedan', 'sedan', 'hatch', 'hatch', 'suv', 'pickup', 'van', 'taxi', 'sedan'];
+  const carOk = (x, z, r = 3.4) => free(x, z, 1.0) && !carInfo.some(c => Math.hypot(c.x - x, c.z - z) < r) && Math.hypot(x, z - 4) > 7;
+  for (const r of ROADS) for (let t = -78; t <= 78; t += rr(8, 13)) {
+    if (ROADS.some(q => Math.abs(t - q) < 11)) continue;
+    for (const lane of [-1, 1]) {
+      if (rnd() < 0.5) continue;
+      const curbSide = rnd() < 0.65, off = curbSide ? lane * 4.6 : lane * rr(1, 2.5);
+      const dirRot = lane > 0 ? 0 : PI, jitter = curbSide ? rr(-.06, .06) : rr(-.7, .7);
+      const mk = () => ({ roll: !curbSide && rnd() < 0.12 ? (rnd() < 0.5 ? PI : PI / 2) : 0, burnt: !curbSide && rnd() < 0.1, lights: rnd() < 0.07 ? 'flicker' : false, tail: rnd() < 0.1 });
+      if (carOk(r + off, t)) placeCar(pick(types), r + off, t, PI / 2 + dirRot + jitter, mk());
+      if (carOk(t, r + off)) placeCar(pick(types), t, r + off, dirRot + jitter, mk());
+    }
   }
 
-  // ---------- wrecked cars ----------
-  const cars = [
-    [-3.5, 14, 0.2, 'carRed', 0], [3.8, -16, 2.9, 'carGrey', 0], [-2.5, -27, 1.4, 'carBlue', 0.25],
-    [13, 3.4, 1.65, 'carGrey', 0], [-14, -3.2, 1.4, 'carRed', Math.PI], [24, -3, -0.3, 'carBlue', 0],
-    [-25, 2.5, 1.9, 'carGrey', 0.2], [3, 30, 0.1, 'carGrey', 0], [-27, -24, 0.7, 'carRed', 0], [26, 25, 2.2, 'carBlue', Math.PI],
-  ];
-  const cabinGeo = new THREE.BoxGeometry(2.2, 0.7, 1.7);
-  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 10); wheelGeo.rotateZ(Math.PI / 2);
-  const carBodyGeo = new THREE.BoxGeometry(4.3, 0.85, 1.9);
-  for (const [x, z, ry, mk, roll] of cars) {
-    const grp = new THREE.Group(); grp.position.set(x, 0, z); grp.rotation.set(0, ry, roll);
-    if (roll > 1) grp.position.y = 1.6; else if (roll > 0) grp.position.y = 0.25;
-    grp.updateMatrixWorld();
-    const parts = [[carBodyGeo, mk, 0, 0.75, 0], [cabinGeo, 'glass', -0.2, 1.5, 0], [box1, mk, -0.2, 1.88, 0, 2.0, 0.06, 1.6]];
-    for (const [gx, gz] of [[1.35, 0.85], [1.35, -0.85], [-1.35, 0.85], [-1.35, -0.85]]) if (rnd() < 0.85) parts.push([wheelGeo, 'tire', gx, 0.36, gz]);
-    for (const p of parts) {
-      const g = p[0].clone();
-      if (p.length > 5) g.applyMatrix4(new THREE.Matrix4().makeScale(p[5], p[6], p[7]));
-      g.applyMatrix4(new THREE.Matrix4().makeTranslation(p[2], p[3], p[4]));
-      g.applyMatrix4(grp.matrixWorld);
-      if (!buckets.has(p[1])) buckets.set(p[1], []);
-      buckets.get(p[1]).push(g);
-    }
-    addCollider(x, z, 4.3, 1.9, ry, 1.8);
-    mapRects.push({ x, z, w: 4.3, d: 1.9, rot: ry, kind: 'c' });
-  }
-  // concrete barriers
-  const barriers = [[-5, -9.5, 0.1], [-2.6, -9.6, -0.15], [10, 9.5, 1.57], [20, -9.6, 0.3], [-20, 9.4, -0.2], [9.5, -22, 1.57], [-9.5, 24, 1.4]];
-  for (const [x, z, ry] of barriers) {
-    add(tiledBox(2.2, 0.85, 0.6, 1), 'concrete', x, 0.42, z, ry);
-    addCollider(x, z, 2.2, 0.6, ry, 0.85);
-    mapRects.push({ x, z, w: 2.2, d: 0.6, rot: ry, kind: 'c' });
-  }
-  // street lamps (some bent)
-  const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 5, 6);
-  const lamps = [];
-  const lampConeGeo = new THREE.ConeGeometry(2.2, 4.8, 14, 1, true);
-  const lampConeMat = new THREE.MeshBasicMaterial({ color: 0xffb070, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  for (const [x, z, tilt] of [[-8.6, -20, 0], [8.6, 20, 0.25], [8.6, -30, 0], [-8.6, 30, -0.4], [20, 8.6, 0], [-30, -8.6, 0.15], [30, -8.6, 0]]) {
-    add(poleGeo, 'metal', x, 2.5, z, 0, tilt, 0);
-    add(box1, 'metal', x + (x > 0 ? -0.5 : 0.5), 4.95, z - tilt * 2.4, 0, 0, 0, 1.1, 0.1, 0.25);
-    if (tilt === 0) {
-      const lm = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
-      const head = new THREE.Mesh(box1, lm); head.position.set(x + (x > 0 ? -0.9 : 0.9), 4.86, z); head.scale.set(0.35, 0.08, 0.2); scene.add(head);
-      const cone = new THREE.Mesh(lampConeGeo, lampConeMat.clone()); cone.position.set(head.position.x, 2.45, z); scene.add(cone);
-      let light = null;
-      if (lamps.length < 2) { light = new THREE.PointLight(0xffb878, 14, 13, 1.5); light.position.set(head.position.x, 4.4, z); scene.add(light); }
-      lamps.push({ light, mat: lm, cone, ph: rnd() * 10, mode: lamps.length === 0 ? 'stutter' : (lamps.length % 2 ? 'buzz' : 'stutter'), on: 1 });
-    }
-    addCollider(x, z, 0.3, 0.3, 0, 5);
-  }
-  // debris / trash / blood pools
-  for (let i = 0; i < 70; i++) {
-    const x = rr(-36, 36), z = rr(-36, 36);
-    if (colliders.some(c => x > c.minX - .5 && x < c.maxX + .5 && z > c.minZ - .5 && z < c.maxZ + .5)) continue;
-    const t = rnd();
-    if (t < 0.45) { const s = rr(0.15, 0.6); add(box1, 'rubble', x, s * 0.25, z, rr(0, 3), rr(-.5, .5), rr(-.5, .5), s, s * 0.5, s * 0.7); }
-    else if (t < 0.65) { const g = new THREE.SphereGeometry(0.35, 6, 4); add(g, 'trash', x, 0.18, z, rr(0, 3), 0, 0, rr(.8, 1.4), 0.6, 1); }
-    else if (t < 0.8) { add(box1, 'rust', x, 0.02, z, rr(0, 3), 0, 0, rr(.6, 1.6), 0.03, rr(.4, 1.0)); }
-    else { const g = new THREE.PlaneGeometry(2, 2); g.rotateX(-Math.PI / 2); add(g, 'blood', x, 0.03, z, rr(0, 6), 0, 0, rr(.5, 1.4), 1, rr(.5, 1.4)); }
-  }
-  // extra clutter: planks, cones, tyres, bins, paper, bricks
-  const coneGeo = new THREE.ConeGeometry(0.2, 0.55, 8), coneBand = new THREE.CylinderGeometry(0.125, 0.15, 0.08, 8);
-  const tyreGeo = new THREE.TorusGeometry(0.32, 0.12, 6, 12), canGeo = new THREE.CylinderGeometry(0.3, 0.26, 0.85, 10);
-  const paperGeo = new THREE.PlaneGeometry(0.28, 0.2);
-  for (let i = 0; i < 90; i++) {
-    const x = rr(-34, 34), z = rr(-34, 34);
-    if (colliders.some(c => x > c.minX - .6 && x < c.maxX + .6 && z > c.minZ - .6 && z < c.maxZ + .6)) continue;
-    if (Math.hypot(x, z - 4) < 3) continue;
-    const t = rnd();
-    if (t < 0.18) add(box1, 'wood', x, 0.04, z, rr(0, 3), 0, rr(-.1, .1), rr(0.12, 0.2), 0.05, rr(0.9, 1.8));
-    else if (t < 0.28) { const fall = rnd() < 0.5; if (fall) { add(coneGeo, 'cone', x, 0.2, z, rr(0, 6), Math.PI / 2, 0); } else { add(coneGeo, 'cone', x, 0.3, z); add(coneBand, 'white', x, 0.3, z); } }
-    else if (t < 0.38) add(tyreGeo, 'tire', x, 0.12, z, rr(0, 3), Math.PI / 2 + rr(-.1, .1), 0);
-    else if (t < 0.46) { const fall = rnd() < 0.5; add(canGeo, 'can', x, fall ? 0.3 : 0.43, z, rr(0, 6), fall ? Math.PI / 2 : 0, 0); }
-    else if (t < 0.8) { for (let k = 0; k < 3; k++) add(paperGeo, 'paper', x + rr(-.6, .6), 0.025, z + rr(-.6, .6), rr(0, 6), -Math.PI / 2 + rr(-.15, .15), 0); }
-    else { for (let k = 0; k < 4; k++) add(box1, 'brick', x + rr(-.4, .4), 0.06, z + rr(-.4, .4), rr(0, 3), rr(-.3, .3), 0, 0.22, 0.08, 0.11); }
-  }
-  // burnt-out paper/blood streaks near center
-  for (let i = 0; i < 6; i++) { const g = new THREE.PlaneGeometry(2, 2); g.rotateX(-Math.PI / 2); add(g, 'blood', rr(-7, 7), 0.031, rr(-7, 7), rr(0, 6), 0, 0, rr(.5, 1), 1, rr(.8, 1.6)); }
-  // rain puddles that catch the light
-  const puddleMat = new THREE.MeshPhongMaterial({ color: 0x0c0d14, specular: 0x8888a0, shininess: 120, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
-  for (let i = 0; i < 9; i++) {
-    const x = rr(-20, 20), z = rr(-20, 20); if (insideAny(x, z)) continue;
-    const pg = new THREE.CircleGeometry(1, 18); pg.rotateX(-Math.PI / 2);
-    const pm = new THREE.Mesh(pg, puddleMat); pm.position.set(x, 0.022, z); pm.scale.set(rr(0.8, 2.2), 1, rr(0.6, 1.6)); pm.rotation.y = rr(0, 3); pm.receiveShadow = true; scene.add(pm);
-  }
-
-  // ---------- fire barrels (with flickering point lights) ----------
-  const fires = [];
-  const barrelGeo = new THREE.CylinderGeometry(0.32, 0.3, 0.9, 10);
-  const flameGeo = new THREE.ConeGeometry(0.28, 0.9, 7, 1, true);
-  const flameMat = new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, fog: true, side: THREE.DoubleSide });
-  const flameMat2 = new THREE.MeshBasicMaterial({ color: 0xffcf6a, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  const fireGlowMat = new THREE.SpriteMaterial({ map: glowTexW(), color: 0xff7a30, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
-  const firePos = [[6.2, 9.8, true], [-9.8, -6.5, true], [-6.3, 21, true], [21, -10.5, false], [-21, 10.5, false], [10.4, -26, false]];
-  for (const [x, z, lit] of firePos) {
-    add(barrelGeo, 'rust', x, 0.45, z);
-    addCollider(x, z, 0.65, 0.65, 0, 0.9);
-    const f1 = new THREE.Mesh(flameGeo, flameMat); f1.position.set(x, 1.3, z); scene.add(f1);
-    const f2 = new THREE.Mesh(flameGeo, flameMat2); f2.position.set(x, 1.15, z); f2.scale.set(0.6, 0.6, 0.6); scene.add(f2);
-    const fg = new THREE.Sprite(fireGlowMat); fg.position.set(x, 1.35, z); fg.scale.setScalar(2.4); scene.add(fg);
-    let light = null;
-    if (lit) { light = new THREE.PointLight(0xff7a30, 18, 16, 1.6); light.position.set(x, 1.8, z); scene.add(light); }
-    fires.push({ x, z, f1, f2, light, ph: rnd() * 10 });
-    mapRects.push({ x, z, w: 0.8, d: 0.8, rot: 0, kind: 'f' });
-  }
-  // a burning car glow (emissive only)
+  // ---------------------------------------------------------------- plaza + parking lot (NE inner block)
   {
-    const f = new THREE.Mesh(flameGeo, flameMat); f.position.set(-3.5, 2.3, 14); f.scale.set(2.2, 1.6, 2.2); scene.add(f);
-    fires.push({ x: -3.5, z: 14, f1: f, f2: null, light: null, ph: 3, big: true });
+    const fx = 18.5, fz = -28;
+    add(new THREE.CylinderGeometry(3.2, 3.3, 0.6, 20), 'concrete', fx, 0.3, fz);
+    const water = new THREE.CircleGeometry(2.9, 20); water.rotateX(-PI / 2); add(water, 'water', fx, 0.55, fz);
+    add(new THREE.CylinderGeometry(0.6, 0.8, 1.6, 10), 'concrete', fx, 1.1, fz);
+    const statue = new THREE.LatheGeometry([[0, 0], [0.32, 0], [0.3, 0.6], [0.22, 1.1], [0.3, 1.4], [0.18, 1.7], [0.2, 1.9], [0, 2.05]].map(p => new THREE.Vector2(p[0], p[1])), 10);
+    add(statue, 'statue', fx, 1.9, fz); add(box1, 'statue', fx + 0.35, 3.2, fz, 0, 0, -0.9, 0.9, 0.12, 0.12);
+    addCollider(fx, fz, 5.6, 5.6, PI / 4, 0.6); addCollider(fx, fz, 5.6, 5.6, 0, 0.6);
+    mapRects.push({ x: fx, z: fz, w: 6.4, d: 6.4, rot: 0, kind: 'c' });
+    for (const [px, pz] of [[12.5, -15], [24, -15], [12.5, -41], [24, -41], [24.5, -21]]) {
+      add(tiledBox(2.6, 0.7, 1.2, 1.5), 'concrete', px, 0.35, pz); for (let k = 0; k < 3; k++) add(sandbagGeo, 'bush', px + (k - 1) * 0.8, 0.85, pz, rr(0, 3), 0, 0, rr(.8, 1.2), rr(.6, .9), rr(.8, 1));
+      addCollider(px, pz, 2.6, 1.2, 0, 0.7); mapRects.push({ x: px, z: pz, w: 2.6, d: 1.2, rot: 0, kind: 'c' });
+    }
+    for (const [px, pz, ry] of [[18.5, -21.5, 0], [18.5, -34.5, PI], [12, -28, PI / 2]]) { add(box1, 'wood', px, 0.45, pz, ry, 0, 0, 1.8, 0.08, 0.5); add(box1, 'metal', px, 0.22, pz, ry, 0, 0, 1.6, 0.44, 0.08); }
+    for (let i = 0; i < 40; i++) add(plane, 'leaf', rr(10, 27), 0.11, rr(-46, -10), rr(0, 6), -PI / 2, 0, 0.18, 0.12, 1);
+    add(tiledBox(2.6, 2.4, 2, 4), 'shop0', 25.5, 1.2, -36); add(box1, 'awning', 25.5, 2.55, -36, 0, 0, 0, 3, 0.1, 2.4); addCollider(25.5, -36, 2.6, 2, 0, 2.4); mapRects.push({ x: 25.5, z: -36, w: 2.6, d: 2, rot: 0, kind: 'b' });
+    for (let row = 0; row < 3; row++) {
+      const pz = -40 + row * 11;
+      for (let i = 0; i <= 6; i++) add(flat, 'line', 30.5 + i * 2.6, 0.105, pz, 0, 0, 0, 0.12, 1, 5);
+      for (let i = 0; i < 6; i++) {
+        if (rnd() < 0.35) continue;
+        placeCar(pick(['sedan', 'hatch', 'suv', 'sedan', 'pickup']), 31.8 + i * 2.6, pz + rr(-.2, .2), (rnd() < .5 ? PI / 2 : -PI / 2) + rr(-.12, .12), { lights: rnd() < 0.08 ? 'flicker' : false });
+      }
+    }
+    add(tiledBox(2, 2.5, 2, 4), 'facC', 30, 1.25, -12.8); add(box1, 'metal', 30, 2.6, -12.8, 0, 0, 0, 2.4, 0.15, 2.4); addCollider(30, -12.8, 2, 2, 0, 2.5);
+    add(box1, 'stripe', 33, 1.0, -12.8, 0, 0, 0.5, 3, 0.1, 0.1);
+    mapRects.push({ x: 30, z: -12.8, w: 2, d: 2, rot: 0, kind: 'b' });
+  }
+  // ---------------------------------------------------------------- gas station (SW inner block corner)
+  {
+    const gx = -19.5, gz = 19.5;
+    add(box1, 'white', gx, 5.0, gz, 0, 0, 0, 14, 0.6, 9.5); add(box1, 'gasRed', gx, 5.0, gz, 0, 0, 0, 14.1, 0.25, 9.6);
+    for (let i = 0; i < 6; i++) add(box1, i % 3 === 1 ? 'lampOff' : 'panelLit', gx - 5 + i * 2, 4.68, gz + (i % 2 ? 2 : -2), 0, 0, 0, 1.2, 0.03, 0.5);
+    for (const [px, pz] of [[-5.5, -3.3], [5.5, -3.3], [-5.5, 3.3], [5.5, 3.3]]) { add(box1, 'white', gx + px, 2.35, gz + pz, 0, 0, 0, 0.45, 4.7, 0.45); addCollider(gx + px, gz + pz, 0.45, 0.45, 0, 4.7); }
+    for (const px of [-2.5, 2.5]) {
+      add(box1, 'concrete', gx + px, 0.12, gz, 0, 0, 0, 1.0, 0.24, 4.4);
+      for (const pz of [-1.2, 1.2]) { add(box1, 'white', gx + px, 0.95, gz + pz, 0, 0, 0, 0.6, 1.5, 0.8); add(box1, 'gasRed', gx + px, 1.55, gz + pz, 0, 0, 0, 0.62, 0.3, 0.82); add(box1, 'metal', gx + px + 0.32, 1.0, gz + pz, 0, 0, 0, 0.04, 0.5, 0.2); }
+      addCollider(gx + px, gz, 1.0, 4.4, 0, 1.6); mapRects.push({ x: gx + px, z: gz, w: 1, d: 4.4, rot: 0, kind: 'c' });
+    }
+    mapRects.push({ x: gx, z: gz, w: 14, d: 9.5, rot: 0, kind: 'g' });
+    building(-24, -16, 30, 36, 4.2, ['x+', 'z-'], { fac: 'facC', ruined: false });
+    placeCar('pickup', gx - 0.2, gz - 3.2, 0.05, { burnt: true, random: false });
+    placeCar('hatch', gx - 4.5, gz + 6.2, 0.6, { doorOpen: 1, broken: true });
+    placeCar('sedan', -14, 38, PI / 2 + 0.3, { broken: true });
+    add(box1, 'metal', -11, 3.5, 11, 0, 0, 0, 0.3, 7, 0.3); addCollider(-11, 11, 0.3, 0.3, 0, 7);
+    add(box1, 'white', -11, 7.2, 11, PI / 4, 0, 0, 2.6, 1.8, 0.3);
+  }
+  // ---------------------------------------------------------------- bus stop (west sidewalk of the main road)
+  {
+    const bx = -7.7, bz = 27;
+    add(box1, 'glass', bx - 0.65, 1.3, bz, 0, 0, 0, 0.05, 1.9, 3.6); add(box1, 'metal', bx, 2.45, bz, 0, 0, 0.08, 1.6, 0.08, 3.9);
+    for (const t of [-1.8, 1.8]) add(box1, 'metal', bx - 0.65, 1.2, bz + t, 0, 0, 0, 0.08, 2.4, 0.08);
+    add(box1, 'wood', bx - 0.35, 0.45, bz, 0, 0, 0, 0.4, 0.06, 2.8); addCollider(bx - 0.5, bz, 0.5, 3.8, 0, 2.4);
+    add(box1, 'metal', bx + 0.4, 1.4, bz + 2.4, 0, 0, 0, 0.07, 2.8, 0.07); add(plateUV(new THREE.BoxGeometry(0.04, 0.4, 0.8), 14), 'signEm', bx + 0.4, 2.7, bz + 2.4);
+    mapRects.push({ x: bx - 0.5, z: bz, w: 0.6, d: 3.8, rot: 0, kind: 'c' });
+  }
+  // ---------------------------------------------------------------- street lamps (instanced heads/cones), traffic lights
+  const lamps = [];
+  const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 5, 6);
+  const lampSpots = [];
+  for (const r of ROADS) for (let t = -78; t <= 78; t += 20) {
+    if (ROADS.some(q => Math.abs(t - q) < 10)) continue;
+    const s = (Math.round(t / 20) % 2) ? 1 : -1;
+    lampSpots.push([r + s * 7.3, t, s, 'x'], [t, r + s * 7.3, s, 'z']);
+  }
+  for (const [px, pz] of [[11, -20], [44, -24], [44, -38]]) lampSpots.push([px, pz, 1, 'x']);
+  const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.35, 0.08, 0.2), new THREE.MeshBasicMaterial({ color: 0xffffff }), lampSpots.length);
+  const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(2.2, 4.8, 14, 1, true), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }), lampSpots.length);
+  const _c = new THREE.Color();
+  let li = 0;
+  for (const [px, pz, s, ax] of lampSpots) {
+    if (!free(px, pz, 0.3)) continue;
+    const bent = rnd() < 0.18, tilt = bent ? rr(0.2, 0.45) * (rnd() < .5 ? 1 : -1) : 0;
+    const dx = ax === 'x' ? -s : 0, dz = ax === 'z' ? -s : 0;
+    add(poleGeo, 'metal', px, 2.5, pz, 0, ax === 'z' ? tilt : 0, ax === 'x' ? tilt : 0);
+    addCollider(px, pz, 0.3, 0.3, 0, 5);
+    if (bent) continue;
+    add(box1, 'metal', px + dx * 0.5, 4.95, pz + dz * 0.5, 0, 0, 0, ax === 'x' ? 1.1 : 0.12, 0.1, ax === 'z' ? 1.1 : 0.12);
+    const hx = px + dx * 0.9, hz = pz + dz * 0.9;
+    _m.compose(_v.set(hx, 4.86, hz), _q.setFromEuler(_e.set(0, ax === 'z' ? PI / 2 : 0, 0)), _s.set(1, 1, 1)); heads.setMatrixAt(li, _m);
+    _m.compose(_v.set(hx, 2.45, hz), _q.identity(), _s.set(1, 1, 1)); cones.setMatrixAt(li, _m);
+    lamps.push({ i: li, x: hx, z: hz, light: null, ph: rnd() * 10, mode: rnd() < 0.25 ? 'dead' : rnd() < 0.5 ? 'stutter' : 'buzz' });
+    li++;
+  }
+  heads.count = cones.count = li;
+  for (let i = 0; i < li; i++) { heads.setColorAt(i, _c.setRGB(1, 0.85, 0.62, THREE.SRGBColorSpace)); cones.setColorAt(i, _c.setRGB(0.05, 0.035, 0.022, THREE.SRGBColorSpace)); }
+  heads.frustumCulled = cones.frustumCulled = false; cones.renderOrder = 2; scene.add(heads, cones);
+  const setLamp = (l, v) => {
+    if (l.mode === 'dead') v = 0.03;
+    heads.setColorAt(l.i, _c.setRGB(v, 0.85 * v, 0.62 * v, THREE.SRGBColorSpace));
+    const dd = Math.hypot(l.x - camPos.x, l.z - camPos.z) * 0.046, f = Math.exp(-dd * dd) * v;
+    cones.setColorAt(l.i, _c.setRGB(0.06 * f, 0.042 * f, 0.026 * f, THREE.SRGBColorSpace));
+    return v;
+  };
+  const lampsCommit = () => { heads.instanceColor.needsUpdate = true; cones.instanceColor.needsUpdate = true; };
+  for (const r of ROADS) for (const q of ROADS) {
+    for (const [sx, sz] of [[1, 1], [-1, -1]]) {
+      const px = r + sx * 7.2, pz = q + sz * 7.2; if (!free(px, pz, 0.2) || Math.abs(px) > 80 || Math.abs(pz) > 80) continue;
+      add(box1, 'metal', px, 2.3, pz, 0, 0, 0, 0.14, 4.6, 0.14);
+      add(box1, 'metal', px - sx * 1.6, 4.5, pz, 0, 0, 0, 3.2, 0.1, 0.1);
+      add(box1, 'carDark', px - sx * 3, 4.2, pz, 0, 0, 0, 0.3, 0.9, 0.32);
+      add(box1, rnd() < 0.5 ? 'tailL' : 'tailOff', px - sx * 3, 4.48, pz + sz * 0.17, 0, 0, 0, 0.18, 0.18, 0.02);
+      addCollider(px, pz, 0.25, 0.25, 0, 4.6);
+    }
   }
 
-  // ---------- merge static ----------
-  for (const [k, list] of buckets) {
+  // ---------------------------------------------------------------- alleys: dumpsters, fire barrels, trash bags, crates, fences at dead ends
+  const barrelGeo = new THREE.CylinderGeometry(0.32, 0.3, 0.9, 10);
+  const firePos = [[6.2, 9.8], [-9.8, -6.5], [-6.3, 21], [10.4, -24]];
+  for (const a of alleys) {
+    const vertical = (a.z1 - a.z0) > (a.x1 - a.x0);
+    const len = vertical ? a.z1 - a.z0 : a.x1 - a.x0, cx = (a.x0 + a.x1) / 2, cz = (a.z0 + a.z1) / 2;
+    add(tiledBox(a.x1 - a.x0, 0.02, a.z1 - a.z0, 2), 'rubble', cx, 0.11, cz);
+    for (let k = 0; k < 4; k++) {
+      const t = rr(-len / 2 + 3, len / 2 - 3), side = rnd() < .5 ? -1 : 1;
+      const px = vertical ? cx + side * 1.3 : cx + t, pz = vertical ? cz + t : cz + side * 1.3;
+      const kind = rnd();
+      if (kind < 0.3 && free(px, pz, 0.8)) dumpster(px, pz, vertical ? PI / 2 : 0);
+      else if (kind < 0.42 && free(px, pz, 0.5)) firePos.push([px, pz]);
+      else if (kind < 0.7) { for (let j = 0; j < 4; j++) add(sandbagGeo, 'bag', px + rr(-.5, .5), 0.25, pz + rr(-.5, .5), rr(0, 3), 0, 0, rr(.7, 1), rr(.55, .8), rr(.7, 1)); }
+      else if (free(px, pz, 0.6)) { add(box1, 'crate', px, 0.4, pz, rr(0, 1), 0, 0, 0.8, 0.8, 0.8); if (rnd() < .5) add(box1, 'crate', px + 0.1, 1.1, pz, rr(0, 1), 0, 0, 0.6, 0.6, 0.6); addCollider(px, pz, 0.9, 0.9, 0, 1.2); }
+    }
+    if (vertical && (a.z0 <= -84 || a.z1 >= 84)) fence(cx, a.z0 <= -84 ? -83.4 : 83.4, a.x1 - a.x0, 0);
+    if (!vertical && (a.x0 <= -84 || a.x1 >= 84)) fence(a.x0 <= -84 ? -83.4 : 83.4, cz, a.z1 - a.z0, PI / 2);
+  }
+  for (const [x, z] of firePos) { add(barrelGeo, 'rust', x, 0.45, z); addCollider(x, z, 0.65, 0.65, 0, 0.9); addFire(x, 0.9, z); }
+  for (let i = 0; i < 30; i++) {
+    const r = pick(ROADS), t = rr(-76, 76), off = rr(-4, 4), along = rnd() < .5;
+    const x = along ? r + off : t, z = along ? t : r + off;
+    if (!free(x, z, 1.5) || Math.hypot(x, z - 4) < 8) continue;
+    const k = rnd(), ry = (along ? 0 : PI / 2) + rr(-.4, .4);
+    if (k < 0.45) jersey(x, z, ry); else if (k < 0.75) sandbags(x, z, ry, 4); else sawhorse(x, z, ry);
+  }
+
+  // ---------------------------------------------------------------- debris, trash, blood, puddles (detail meshes)
+  const coneGeoT = new THREE.ConeGeometry(0.2, 0.55, 8), coneBand = new THREE.CylinderGeometry(0.125, 0.15, 0.08, 8);
+  const tyreGeo = new THREE.TorusGeometry(0.32, 0.12, 6, 12), canGeo = new THREE.CylinderGeometry(0.3, 0.26, 0.85, 10);
+  const paperGeo = new THREE.PlaneGeometry(0.28, 0.2), trashGeo = new THREE.SphereGeometry(0.35, 6, 4);
+  const bloodGeo = new THREE.PlaneGeometry(2, 2); bloodGeo.rotateX(-PI / 2);
+  const puddleGeo = new THREE.CircleGeometry(1, 16); puddleGeo.rotateX(-PI / 2);
+  for (let i = 0; i < 750; i++) {
+    const x = rr(-83, 83), z = rr(-83, 83);
+    if (!free(x, z, 0.4) || Math.hypot(x, z - 4) < 3) continue;
+    const road = onRoad(x, z), t = rnd(), y0 = road ? 0 : 0.1;
+    if (t < 0.22) { const s = rr(0.15, 0.6); add(box1, 'rubble', x, y0 + s * 0.25, z, rr(0, 3), rr(-.5, .5), rr(-.5, .5), s, s * 0.5, s * 0.7); }
+    else if (t < 0.32) add(trashGeo, 'trash', x, y0 + 0.18, z, rr(0, 3), 0, 0, rr(.8, 1.4), 0.6, 1);
+    else if (t < 0.4) add(box1, 'wood', x, y0 + 0.04, z, rr(0, 3), 0, rr(-.1, .1), rr(0.12, 0.2), 0.05, rr(0.9, 1.8));
+    else if (t < 0.45 && road) { if (rnd() < 0.5) add(coneGeoT, 'cone', x, 0.2, z, rr(0, 6), PI / 2, 0); else { add(coneGeoT, 'cone', x, 0.3, z); add(coneBand, 'white', x, 0.3, z); } }
+    else if (t < 0.5) add(tyreGeo, 'tireD', x, y0 + 0.12, z, rr(0, 3), PI / 2 + rr(-.1, .1), 0);
+    else if (t < 0.55) { const fall = rnd() < 0.5; add(canGeo, 'can', x, y0 + (fall ? 0.3 : 0.43), z, rr(0, 6), fall ? PI / 2 : 0, 0); }
+    else if (t < 0.75) { for (let k = 0; k < 3; k++) add(paperGeo, 'paper', x + rr(-.6, .6), y0 + 0.025, z + rr(-.6, .6), rr(0, 6), -PI / 2 + rr(-.15, .15), 0); }
+    else if (t < 0.82) { for (let k = 0; k < 4; k++) add(box1, 'brick', x + rr(-.4, .4), y0 + 0.06, z + rr(-.4, .4), rr(0, 3), rr(-.3, .3), 0, 0.22, 0.08, 0.11); }
+    else if (t < 0.92) add(bloodGeo, 'blood', x, y0 + 0.03, z, rr(0, 6), 0, 0, rr(.5, 1.4), 1, rr(.5, 1.4));
+    else if (road) add(puddleGeo, 'puddle', x, 0.022, z, rr(0, 3), 0, 0, rr(0.8, 2.2), 1, rr(0.6, 1.6));
+  }
+
+  // ---------------------------------------------------------------- merge static geometry into chunked meshes (frustum + distance culling)
+  const detailMeshes = [], chunkMeshes = [];
+  const NOREC = ['blood', 'line', 'lineY', 'vcB', 'headF', 'sirenR', 'sirenB', 'signEm', 'puddle'];
+  for (const [, b] of buckets) {
+    const list = b.list;
+    const needCol = list.some(g => g.attributes.color);
+    for (const g of list) {
+      if (needCol && !g.attributes.color) g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(1), 3));
+      if (!needCol && g.attributes.color) g.deleteAttribute('color');
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'color'].includes(k)) g.deleteAttribute(k);
+      if (!g.attributes.normal) g.computeVertexNormals();
+      g.clearGroups(); g.morphAttributes = {};
+    }
     const merged = mergeGeometries(list, false);
     list.forEach(g => g.dispose());
-    const mesh = new THREE.Mesh(merged, mats[k]);
+    if (!merged) { console.warn('merge failed', b.mat); continue; }
+    merged.computeBoundingSphere();
+    const mesh = new THREE.Mesh(merged, mats[b.mat]);
     mesh.matrixAutoUpdate = false; mesh.updateMatrix();
-    mesh.receiveShadow = k !== 'blood' && k !== 'line';
+    mesh.receiveShadow = !NOREC.includes(b.mat);
+    if (b.mat === 'blood' || b.mat === 'puddle' || b.mat.startsWith('line')) mesh.renderOrder = 1;
     scene.add(mesh);
+    const c = merged.boundingSphere.center;
+    const rec = { mesh, x: c.x, z: c.z, r: merged.boundingSphere.radius };
+    (DETAIL.has(b.mat) ? detailMeshes : chunkMeshes).push(rec);
   }
+  let glowObjs = null;
+  const scanGlow = () => { glowObjs = []; scene.traverse(o => { if ((o.isSprite || (o.isMesh && o.material && o.material.blending === THREE.AdditiveBlending)) && !o.isInstancedMesh && o.userData.world !== false) { o.updateWorldMatrix(true, false); o.userData.wp = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld); glowObjs.push(o); } }); };
+  const cull = (cx, cz, detailDist, farDist) => {
+    camPos.x = cx; camPos.z = cz;
+    for (const o of glowObjs) o.visible = Math.hypot(o.userData.wp.x - cx, o.userData.wp.z - cz) < farDist * 0.85;
+    for (const d of detailMeshes) d.mesh.visible = Math.hypot(d.x - cx, d.z - cz) - d.r < detailDist;
+    for (const d of chunkMeshes) d.mesh.visible = Math.hypot(d.x - cx, d.z - cz) - d.r < farDist;
+  };
 
-  // ---------- flickering neon sign on the corner building
-  const neons = [];
-  {
+  // ---------------------------------------------------------------- neon signs
+  const neonSign = (text, glow, fill, x, y, z, ry, w = 3.2, h = 1.2, mode = 'stutter') => {
     const c = document.createElement('canvas'); c.width = 256; c.height = 96; const g = c.getContext('2d');
     g.fillStyle = '#000'; g.fillRect(0, 0, 256, 96);
-    g.font = 'bold 64px "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.shadowColor = '#ff2040'; g.shadowBlur = 18; g.fillStyle = '#ff6a7a'; g.fillText('藥局 24H', 128, 50); g.shadowBlur = 0; g.fillStyle = '#ffd0d6'; g.fillText('藥局 24H', 128, 50);
+    g.font = `bold ${text.length > 4 ? 46 : 60}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.shadowColor = glow; g.shadowBlur = 18; g.fillStyle = fill; g.fillText(text, 128, 50); g.shadowBlur = 0; g.globalAlpha = 0.7; g.fillStyle = '#fff4f0'; g.fillText(text, 128, 50);
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
     const nm = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-    const b0 = buildings[0];
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.2), nm);
-    sign.position.set(b0.x + b0.w / 2 + 0.06, 4.2, b0.z - b0.d * 0.2); sign.rotation.y = Math.PI / 2; scene.add(sign);
-    const c2 = document.createElement('canvas'); c2.width = 256; c2.height = 96; const g2 = c2.getContext('2d');
-    g2.fillStyle = '#000'; g2.fillRect(0, 0, 256, 96); g2.font = g.font; g2.textAlign = 'center'; g2.textBaseline = 'middle';
-    g2.shadowColor = '#20c0ff'; g2.shadowBlur = 18; g2.fillStyle = '#7adfff'; g2.fillText('旅館', 128, 50); g2.shadowBlur = 0; g2.fillStyle = '#e0f8ff'; g2.fillText('旅館', 128, 50);
-    const t2 = new THREE.CanvasTexture(c2); t2.colorSpace = THREE.SRGBColorSpace;
-    const nm2 = new THREE.MeshBasicMaterial({ map: t2, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
-    const b3 = buildings[9];
-    const sign2 = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.0), nm2);
-    sign2.position.set(b3.x - b3.w / 2 - 0.06, 5.5, b3.z + b3.d * 0.15); sign2.rotation.y = -Math.PI / 2; scene.add(sign2);
-    neons.push({ mat: nm, ph: 1, mode: 'stutter' }, { mat: nm2, ph: 5, mode: 'buzz' });
-  }
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), nm); m.position.set(x, y, z); m.rotation.y = ry; scene.add(m);
+    neons.push({ mat: nm, ph: rnd() * 9, mode });
+  };
+  const near = (x, z) => buildings.slice().sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0];
+  const signOn = (b, face, text, glow, fill, y, mode) => {
+    const p = { 'x+': [b.x + b.w / 2 + 0.08, b.z, PI / 2], 'x-': [b.x - b.w / 2 - 0.08, b.z, -PI / 2], 'z+': [b.x, b.z + b.d / 2 + 0.08, 0], 'z-': [b.x, b.z - b.d / 2 - 0.08, PI] }[face];
+    neonSign(text, glow, fill, p[0], y, p[1], p[2], 3.2, 1.2, mode);
+  };
+  signOn(near(-14, -14), 'x+', '藥局 24H', '#ff2040', '#ff6a7a', 4.6, 'stutter');
+  signOn(near(14, 14), 'x-', '旅館', '#20c0ff', '#7adfff', 5.8, 'buzz');
+  signOn(near(-14, -62), 'x+', 'KTV', '#c040ff', '#e0a0ff', 6.4, 'buzz');
+  signOn(near(62, 14), 'x-', '當舖', '#ffb020', '#ffd070', 4.8, 'stutter');
+  neonSign('加油站', '#ff3020', '#ff8070', -11 + 0.17, 7.2, 11 + 0.17, PI / 4, 2.4, 0.9, 'buzz');
 
-  // ---------- distant city glow / smoke backdrop ----------
-  const skyGeo = new THREE.SphereGeometry(80, 16, 10);
+  // ---------------------------------------------------------------- sky
   const skyMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: {},
+    side: THREE.BackSide, depthWrite: false, fog: false, uniforms: {},
     vertexShader: 'varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
     fragmentShader: 'varying vec3 vp; void main(){ float h = normalize(vp).y; vec3 base = vec3(0.067,0.063,0.086); vec3 glow = vec3(0.32,0.09,0.06); float g = exp(-abs(h-0.02)*9.0); vec3 c = mix(base, glow, g*0.55); c = mix(c, vec3(0.04,0.035,0.055), smoothstep(0.1,0.6,h)); gl_FragColor = vec4(c,1.); }'
   });
-  const sky = new THREE.Mesh(skyGeo, skyMat); sky.renderOrder = -1; scene.add(sky);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(70, 16, 10), skyMat); sky.renderOrder = -1; sky.frustumCulled = false; scene.add(sky);
 
-  const spawnPoints = [
-    [0, -37], [0, 37], [-37, 0], [37, 0], [-4, -36], [4, 36], [-36, 4], [36, -4],
-    [-24, -24], [24, 24], [-24, 24], [24, -24], [-36, -36], [36, 36], [-36, 36], [36, -36],
-    [23, 0], [-23, 0], [0, 23], [0, -23],
-  ];
-  return { colliders, mapRects, fires, spawnPoints, sky, bounds: 38, lamps, neons, ground, splat };
+  // ---------------------------------------------------------------- collision queries (oriented boxes) with a spatial hash
+  const GC = 8, GO = 128, GN = Math.ceil(GO * 2 / GC);
+  const grid = Array.from({ length: GN * GN }, () => []);
+  for (const c of colliders) {
+    for (let gx = Math.max(0, Math.floor((c.minX + GO) / GC)); gx <= Math.min(GN - 1, Math.floor((c.maxX + GO) / GC)); gx++)
+      for (let gz = Math.max(0, Math.floor((c.minZ + GO) / GC)); gz <= Math.min(GN - 1, Math.floor((c.maxZ + GO) / GC)); gz++) grid[gx * GN + gz].push(c);
+  }
+  let stamp = 1; const out = [];
+  const query = (x0, z0, x1, z1) => {
+    stamp++; out.length = 0;
+    const ax = Math.max(0, Math.floor((x0 + GO) / GC)), bx = Math.min(GN - 1, Math.floor((x1 + GO) / GC));
+    const az = Math.max(0, Math.floor((z0 + GO) / GC)), bz = Math.min(GN - 1, Math.floor((z1 + GO) / GC));
+    for (let gx = ax; gx <= bx; gx++) for (let gz = az; gz <= bz; gz++) for (const c of grid[gx * GN + gz]) if (c._s !== stamp) { c._s = stamp; out.push(c); }
+    return out;
+  };
+  const resolveCircle = (p, r) => {
+    const list = query(p.x - r, p.z - r, p.x + r, p.z + r).slice();
+    for (const c of list) {
+      const dx = p.x - c.x, dz = p.z - c.z;
+      let lx = dx * c.c - dz * c.s, lz = dx * c.s + dz * c.c;
+      const qx = Math.max(-c.hw, Math.min(c.hw, lx)), qz = Math.max(-c.hd, Math.min(c.hd, lz));
+      const ex = lx - qx, ez = lz - qz, d2 = ex * ex + ez * ez;
+      if (d2 >= r * r) continue;
+      if (d2 > 1e-8) { const d = Math.sqrt(d2); lx = qx + ex / d * r; lz = qz + ez / d * r; }
+      else { const a = c.hw - Math.abs(lx), b = c.hd - Math.abs(lz); if (a < b) lx = Math.sign(lx || 1) * (c.hw + r); else lz = Math.sign(lz || 1) * (c.hd + r); }
+      p.x = c.x + lx * c.c + lz * c.s; p.z = c.z - lx * c.s + lz * c.c;
+    }
+    p.x = Math.max(-BOUND, Math.min(BOUND, p.x)); p.z = Math.max(-BOUND, Math.min(BOUND, p.z));
+  };
+  const inside = (x, z, pad = 0) => {
+    for (const c of query(x - pad, z - pad, x + pad, z + pad)) {
+      const dx = x - c.x, dz = z - c.z, lx = dx * c.c - dz * c.s, lz = dx * c.s + dz * c.c;
+      if (Math.abs(lx) < c.hw + pad && Math.abs(lz) < c.hd + pad) return true;
+    }
+    return false;
+  };
+  const rayCast = (o, d, len, minH = 1.2) => {
+    let best = len;
+    const ex = o.x + d.x * len, ez = o.z + d.z * len;
+    for (const c of query(Math.min(o.x, ex), Math.min(o.z, ez), Math.max(o.x, ex), Math.max(o.z, ez))) {
+      if (c.h < minH) continue;
+      const dx = o.x - c.x, dz = o.z - c.z;
+      const ox = dx * c.c - dz * c.s, oz = dx * c.s + dz * c.c, vx = d.x * c.c - d.z * c.s, vz = d.x * c.s + d.z * c.c;
+      let tmin = 0, tmax = best, ok = true;
+      for (let k = 0; k < 3 && ok; k++) {
+        const oo = k === 0 ? ox : k === 1 ? o.y : oz, dd = k === 0 ? vx : k === 1 ? d.y : vz;
+        const mn = k === 0 ? -c.hw : k === 1 ? 0 : -c.hd, mx = k === 0 ? c.hw : k === 1 ? c.h : c.hd;
+        if (Math.abs(dd) < 1e-7) { if (oo < mn || oo > mx) ok = false; }
+        else { let t1 = (mn - oo) / dd, t2 = (mx - oo) / dd; if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) ok = false; }
+      }
+      if (ok && tmin < best) best = tmin;
+    }
+    return best;
+  };
+
+  // ---------------------------------------------------------------- navigation flow field (1 m grid, BFS from the player)
+  const NO = 86, NN = NO * 2;
+  const blocked = new Uint8Array(NN * NN), dist = new Int16Array(NN * NN).fill(-1), queue = new Int32Array(NN * NN);
+  for (let i = 0; i < NN; i++) for (let j = 0; j < NN; j++) {
+    const x = i - NO + 0.5, z = j - NO + 0.5;
+    blocked[i * NN + j] = (Math.abs(x) > BOUND - 0.3 || Math.abs(z) > BOUND - 0.3 || inside(x, z, 0.4)) ? 1 : 0;
+  }
+  const cellOf = (x, z) => { const i = Math.floor(x + NO), j = Math.floor(z + NO); return (i < 0 || j < 0 || i >= NN || j >= NN) ? -1 : i * NN + j; };
+  const NB = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const updateFlow = (px, pz) => {
+    dist.fill(-1);
+    let s = cellOf(px, pz); if (s < 0) return;
+    if (blocked[s]) {
+      const si = s / NN | 0, sj = s % NN; let found = -1;
+      for (let r = 1; r < 4 && found < 0; r++) for (const [a, b] of NB) { const ii = si + a * r, jj = sj + b * r; if (ii < 0 || jj < 0 || ii >= NN || jj >= NN) continue; const k = ii * NN + jj; if (!blocked[k]) { found = k; break; } }
+      if (found < 0) return; s = found;
+    }
+    let h = 0, t = 0; queue[t++] = s; dist[s] = 0;
+    while (h < t) {
+      const k = queue[h++], i = k / NN | 0, j = k % NN, dk = dist[k] + 1;
+      for (let n = 0; n < 8; n++) {
+        const a = i + NB[n][0], b = j + NB[n][1];
+        if (a < 0 || b < 0 || a >= NN || b >= NN) continue;
+        const q = a * NN + b; if (blocked[q] || dist[q] >= 0) continue;
+        if (n >= 4 && (blocked[a * NN + j] || blocked[i * NN + b])) continue;
+        dist[q] = dk; queue[t++] = q;
+      }
+    }
+  };
+  const flowDir = (x, z) => {
+    const k = cellOf(x, z); if (k < 0) return null;
+    const i = k / NN | 0, j = k % NN;
+    let best = dist[k] >= 0 ? dist[k] : 32767, bi = -1, bj = -1;
+    for (let n = 0; n < 8; n++) {
+      const a = i + NB[n][0], b = j + NB[n][1]; if (a < 0 || b < 0 || a >= NN || b >= NN) continue;
+      const q = a * NN + b; if (dist[q] < 0) continue;
+      if (n >= 4 && (blocked[a * NN + j] || blocked[i * NN + b])) continue;
+      if (dist[q] < best) { best = dist[q]; bi = a; bj = b; }
+    }
+    if (bi < 0) return null;
+    return Math.atan2(bi - NO + 0.5 - x, bj - NO + 0.5 - z);
+  };
+  const flowDist = (x, z) => { const k = cellOf(x, z); return k < 0 ? -1 : dist[k]; };
+
+  // spawn points: open cells across the whole map (roads, sidewalks, alleys, plaza)
+  const spawnPoints = [];
+  for (let x = -80; x <= 80; x += 4) for (let z = -80; z <= 80; z += 4) if (!inside(x, z, 1.0)) spawnPoints.push([x, z]);
+
+  scanGlow();
+  return { colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
 }
 
 // blood splatter texture (white, tinted by material colour)
@@ -345,11 +845,9 @@ export function makeSplatTex() {
   g.globalAlpha = 0.9; blob(64, 64, 30);
   g.globalAlpha = 0.7; for (let i = 0; i < 9; i++) { const a = Math.random() * 7, d = 26 + Math.random() * 24; blob(64 + Math.cos(a) * d, 64 + Math.sin(a) * d, 4 + Math.random() * 9); }
   g.globalAlpha = 0.8; for (let i = 0; i < 26; i++) { const a = Math.random() * 7, d = 34 + Math.random() * 28; g.beginPath(); g.arc(64 + Math.cos(a) * d, 64 + Math.sin(a) * d, 1 + Math.random() * 2.5, 0, 7); g.fill(); }
-  // streaks
   g.globalAlpha = 0.5; g.lineCap = 'round'; g.strokeStyle = '#fff'; for (let i = 0; i < 5; i++) { const a = Math.random() * 7; g.lineWidth = 2 + Math.random() * 3; g.beginPath(); g.moveTo(64, 64); g.lineTo(64 + Math.cos(a) * 58, 64 + Math.sin(a) * 58); g.stroke(); }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-
 function glowTexW() {
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.3, 'rgba(255,255,255,.4)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
