@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
-import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261005c';
+import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261006a';
 
 // seeded rng
 let seed = 1337;

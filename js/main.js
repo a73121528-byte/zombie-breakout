@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261005c';
-import { buildWorld } from './world.js?v=20261005c';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261005c';
-import { loadHeroGLB, buildRiggedHeroine, HERO_GLB } from './heroRig.js?v=20261005c';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005c';
+import { Sfx } from './audio.js?v=20261006a';
+import { buildWorld } from './world.js?v=20261006a';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261006a';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB } from './heroRig.js?v=20261006a';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261006a';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -1882,7 +1882,7 @@ function setLoad(k, label) {
   let fake = 0.05, curK = 0; const tick = setInterval(() => { fake = Math.min(0.85, fake + 0.03); setLoad(Math.max(fake, curK)); }, 120);
   try {
     if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
-    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261005c', k => { curK = 0.1 + k * 0.8; setLoad(curK); });
+    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261006a', k => { curK = 0.1 + k * 0.8; setLoad(curK); });
     setLoad(0.92, '組裝星璃…');
     swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
     window.__heroMode = 'rigged';
