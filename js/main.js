@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Sfx } from './audio.js?v=20261005c';
 import { buildWorld } from './world.js?v=20261005c';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump } from './characters.js?v=20261005c';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261005c';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB } from './heroRig.js?v=20261005c';
 import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261005c';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
@@ -88,7 +89,7 @@ function assignLights() {
 }
 
 // ---------------------------------------------------------------- player
-const hero = buildHeroine();
+let hero = buildHeroine(); // v0.4 procedural heroine; replaced by the rigged GLB once loaded (fallback if it fails)
 scene.add(hero.root);
 const guns = buildGuns();
 for (const k in guns) hero.gunMount.add(guns[k].g);
@@ -1198,6 +1199,7 @@ function updatePlayer(dt) {
 }
 const pony = { ax: [0, 0, 0], vx: [0, 0, 0], az: [0, 0, 0], vz: [0, 0, 0], lastFacing: 0, lastY: 0.95 };
 function animateHero(dt) {
+  if (hero.rigged) { animateRigged(dt); return; }
   const R = hero, t = G.time;
   const run = P.run;
   P.runPhase += dt * (4 + 7 * run);
@@ -1328,6 +1330,77 @@ function animateHero(dt) {
 }
 const _gq1 = new THREE.Quaternion(), _gq2 = new THREE.Quaternion(), _ge = new THREE.Euler();
 function lerpPose(a, b, k) { return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: lerp(a.z, b.z, k), ty: lerp(a.ty, b.ty, k) }; }
+
+// ---- rigged heroine (female_hooded.glb): clip state machine + crossfades, gun aim, hair / coat secondary motion
+const SLASH_HIT = 0.47; // Sword_Slash: blade crosses the front at ~0.47 s (measured from the wrist path)
+const _rq = new THREE.Quaternion(), _rq2 = new THREE.Quaternion(), _re = new THREE.Euler(), _rv = new THREE.Vector3();
+function animateRigged(dt) {
+  const R = hero, t = G.time, run = P.run, st = P.state;
+  const gunOut = isGun(INV.cur) && st !== 'skill';
+  const entered = st !== R.lastState || (st === 'attack' && P.combo !== R.lastCombo) || (st === 'attack' && P.t < R.lastT);
+  R.lastState = st; R.lastCombo = P.combo; R.lastT = P.t;
+  const shot = INV.recoil > (R.lastRecoil ?? 0) + 0.05; R.lastRecoil = INV.recoil;
+  let gunAim = false;
+  if (st === 'dead') R.play('Death', { once: true, fade: 0.12 });
+  else if (st === 'hurt') { if (entered) R.play('HitRecieve', { once: true, fade: 0.06, ts: 1.6, restart: true }); }
+  else if (st === 'dodge') { if (entered) R.play('Roll', { once: true, fade: 0.05, ts: 1.55 / 0.5, start: 0.08, restart: true }); }
+  else if (st === 'attack') {
+    if (entered) {
+      const A = ATK[P.combo], start = P.combo === 2 ? 0 : 0.12, ts = (SLASH_HIT - start) / A.hit;
+      R.play('Sword_Slash', { once: true, fade: P.combo ? 0.05 : 0.08, ts, start, restart: true });
+    }
+  } else if (st === 'skill') { if (entered) R.play('Sword_Slash', { once: true, fade: 0.06, ts: 1.15 / 0.72, start: 0.1, restart: true }); }
+  else { // move
+    const moving = run > 0.07;
+    const loco = () => {
+      if (!moving) R.play(gunOut ? 'Idle_Gun' : 'Idle', { fade: 0.25 });
+      else if (run < 0.55) R.play('Walk', { fade: 0.2, ts: clamp(run / 0.3, 0.75, 1.7) });
+      else R.play('Run', { fade: 0.18, ts: clamp(run / 0.85, 0.8, 1.3) });
+    };
+    if (gunOut) {
+      const aiming = INV.aimT > 0 || P.attackHeld;
+      if (INV.reloading && !moving) R.play('Interact', { fade: 0.15, ts: 1.58 / Math.max(0.6, INV.reloadMax) });
+      else if (aiming) {
+        gunAim = true;
+        if (moving) R.play('Run_Shoot', { fade: 0.15, ts: clamp(run / 0.8, 0.7, 1.25) });
+        else if (shot) R.play('Gun_Shoot', { once: true, fade: 0.04, restart: true, ts: 1.4 });
+        else if (R.anim.name !== 'Gun_Shoot' || R.anim.cur.time >= R.clips.Gun_Shoot.duration - 0.05) R.play('Idle_Gun_Pointing', { fade: 0.15 });
+      } else loco();
+    } else loco();
+  }
+  R.mixer.update(dt);
+  R.root.updateMatrixWorld(true);
+  // gun: level toward the aim direction (or low-ready) in world space, independent of the clip's hand pose
+  if (gunOut && st === 'move' || gunOut && st === 'hurt') {
+    R.grip.getWorldQuaternion(_rq).invert();
+    _rq2.setFromEuler(_re.set(gunAim ? -INV.recoil * 0.12 : 0.55, P.facing + (gunAim ? 0 : 0.35), 0, 'YXZ'));
+    R.gunMount.quaternion.slerp(_rq.multiply(_rq2), gunAim ? 1 : damp(20, dt));
+  } else R.gunMount.quaternion.identity();
+  // coat tails trail behind with speed (+ a little flutter)
+  const skirtX = st === 'dodge' ? 0.5 : st === 'skill' ? 0.6 : 0.32 * run + Math.sin(t * 9) * 0.03 * run;
+  R.skirt.rotation.x = lerp(R.skirt.rotation.x, skirtX, damp(8, dt));
+  // ponytail: spring chain hanging in world space (yaw = facing) so it reacts to turns / speed
+  const turn = angDiff(pony.lastFacing, P.facing) / Math.max(dt, 1e-3); pony.lastFacing = P.facing;
+  R.ponyBase.parent.getWorldPosition(_rv); const vy = (_rv.y - pony.lastY) / Math.max(dt, 1e-3); pony.lastY = _rv.y;
+  for (let i = 0; i < 3; i++) {
+    const tx = (i === 0 ? 0.22 : 0.1) + run * (0.55 - i * 0.12) + (st === 'skill' ? 0.9 : 0) + (st === 'dodge' ? 0.8 : 0);
+    const tz = clamp(-turn * 0.03 * (i + 1), -0.8, 0.8);
+    pony.vx[i] += ((tx - pony.ax[i]) * 70 - pony.vx[i] * 9) * dt - clamp(vy, -6, 6) * 0.15 * (i + 1) * dt * 10;
+    pony.vz[i] += ((tz - pony.az[i]) * 60 - pony.vz[i] * 8) * dt;
+    pony.ax[i] += pony.vx[i] * dt; pony.az[i] += pony.vz[i] * dt;
+    pony.ax[i] = clamp(pony.ax[i], -0.4, 2.2); pony.az[i] = clamp(pony.az[i], -1, 1);
+    if (i === 0) { // base: undo the head's world rotation, hang from root yaw
+      R.ponyBase.parent.getWorldQuaternion(_rq).invert();
+      _rq2.setFromEuler(_re.set(0, P.facing, 0, 'YXZ'));
+      R.ponyBase.quaternion.copy(_rq.multiply(_rq2));
+    }
+    R.pony[i].rotation.set(pony.ax[i], 0, pony.az[i]);
+  }
+  // invulnerability shimmer + star twinkle
+  const em = P.invuln > 0 && st === 'dodge' ? 0x2a1040 : 0x050308;
+  for (const m of R.mats.shimmer) m.emissive.setHex(em);
+  R.star.material.emissiveIntensity = 0.8 + Math.sin(t * 3) * 0.3;
+}
 
 // ---------------------------------------------------------------- waves
 const G = { mode: 'menu', time: 0, playTime: 0, kills: 0, wave: 0, phase: 'idle', phaseT: 0, queue: [], spawnT: 0, boss: null, bossDead: false, deadAt: 0, partPity: 0 };
@@ -1665,7 +1738,7 @@ function resetGame() {
   Object.assign(P, { hp: P.maxHp, st: P.maxSt, stDelay: 0, state: 'move', t: 0, combo: 0, comboWin: 0, queued: false, invuln: 0, skillCd: 0, lock: null, attackHeld: false, run: 0 });
   P.pos.set(0, 0, 4); P.kb.set(0, 0, 0); P.facing = Math.PI;
   CAM.yaw = 0; CAM.pitch = 0.3; CAM.pivot.set(0, 1.5, 4);
-  hero.body.rotation.set(0, 0, 0);
+  hero.body.rotation.set(0, 0, 0); if (hero.rigged) { hero.resetAnim(); hero.lastState = null; }
   Object.assign(G, { time: 0, playTime: 0, kills: 0, wave: 0, phase: 'intro', phaseT: 0, queue: [], boss: null, bossDead: false, partPity: 3 });
   resetInventory();
   $('bossBar').classList.add('hidden'); $('bLock').classList.remove('on');
@@ -1776,8 +1849,40 @@ applyQuality(qSetting);
   for (let i = pickups.length - 1; i >= 0; i--) removePickup(i);
   refreshWeaponVisuals();
 })();
-$('loading').classList.add('hidden');
+// ---- rigged heroine: load the GLB behind the loading screen; menu becomes usable when done (fallback: v0.4 procedural)
+function swapHero(R) {
+  scene.remove(hero.root);
+  for (const k in guns) R.gunMount.add(guns[k].g);
+  hero = R; scene.add(R.root);
+  R.root.position.set(P.pos.x, P.gy, P.pos.z); R.root.rotation.y = P.facing;
+  applyQuality(qSetting);
+  refreshWeaponVisuals();
+  try { renderer.compile(scene, camera); } catch (e) { }
+}
+function setLoad(k, label) {
+  const bar = $('ldBar'), pct = $('ldPct'), txt = $('ldTxt');
+  if (bar) bar.style.width = Math.round(k * 100) + '%';
+  if (pct) pct.textContent = Math.round(k * 100) + '%';
+  if (txt && label) txt.textContent = label;
+}
+(async function bootHero() {
+  setLoad(0.05, '載入角色模型…');
+  let fake = 0.05, curK = 0; const tick = setInterval(() => { fake = Math.min(0.85, fake + 0.03); setLoad(Math.max(fake, curK)); }, 120);
+  try {
+    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261005c', k => { curK = 0.1 + k * 0.8; setLoad(curK); });
+    setLoad(0.92, '組裝星璃…');
+    swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
+    window.__heroMode = 'rigged';
+  } catch (e) {
+    console.warn('rigged heroine unavailable, using procedural fallback:', e && e.message ? e.message : e);
+    window.__heroMode = 'procedural';
+  }
+  clearInterval(tick);
+  setLoad(1, '準備完成');
+  await new Promise(r => setTimeout(r, 180));
+  $('loading').classList.add('hidden');
+})();
 frame();
 
 // debug/test hook
-window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, hero, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
+window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, get hero() { return hero; }, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };

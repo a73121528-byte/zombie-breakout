@@ -210,7 +210,7 @@ export function getGlowTex() {
   g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
   glowTex = new THREE.CanvasTexture(c); glowTex.colorSpace = THREE.SRGBColorSpace; return glowTex;
 }
-function glowSprite(color, size, opacity = 0.8) {
+export function glowSprite(color, size, opacity = 0.8) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlowTex(), color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, fog: true }));
   s.scale.setScalar(size); s.userData.glow = true; return s;
 }
@@ -368,7 +368,7 @@ export function buildHeroine() {
   R.star = star;
   return R;
 }
-function starGeo() {
+export function starGeo() {
   return cached('star', () => {
     const sh = new THREE.Shape();
     for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2 - Math.PI / 2, r = i % 2 ? 0.42 : 1; if (i) sh.lineTo(Math.cos(a) * r, Math.sin(a) * r); else sh.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
@@ -378,7 +378,7 @@ function starGeo() {
 const bladeMat = new THREE.MeshPhongMaterial({ color: 0xa9adb5, specular: 0xffffff, shininess: 90, emissive: 0x111114 });
 const handleMat = new THREE.MeshLambertMaterial({ color: 0x2b1a12 });
 const bloodMat = new THREE.MeshLambertMaterial({ color: 0x4a0408 });
-function buildMachete() {
+export function buildMachete() {
   const g = new THREE.Group();
   const bladeGeo = cached('blade', () => {
     const s = new THREE.Shape();

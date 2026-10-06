@@ -100,7 +100,13 @@ button{font-family:inherit;border:none;outline:none;color:inherit;background:non
 .stats div{display:flex;flex-direction:column;align-items:center}
 .stats span{font-size:12px;color:#a99;letter-spacing:.2em}
 .stats b{font-size:24px;color:#eee}
-#loading{background:#0b0a0f;z-index:30}
+#loading{background:radial-gradient(ellipse at 50% 60%,#1c1424 0%,#0b0a0f 70%);z-index:30;display:flex;align-items:center;justify-content:center}
+.ldBox{width:min(70vw,420px);text-align:center}
+.ldTitle{font-size:clamp(22px,6vh,40px);letter-spacing:.3em;color:#e8dcc8;text-shadow:0 0 18px rgba(140,60,200,.55);margin-bottom:1.4vh}
+#loading .ld{color:#b8a8c8;font-size:14px;margin-bottom:10px}
+.ldTrack{height:8px;border-radius:4px;background:rgba(255,255,255,.08);border:1px solid rgba(192,128,64,.45);overflow:hidden}
+.ldBar{height:100%;width:0;background:linear-gradient(90deg,#5a2f8c,#8452c4 60%,#c08040);box-shadow:0 0 10px rgba(132,82,196,.7);transition:width .15s}
+.ldPct{margin-top:6px;color:#c08040;font-size:12px;letter-spacing:.1em}
 .ld{font-size:16px;letter-spacing:.3em;color:#a88}
 #rotate{position:fixed;inset:0;z-index:100;background:#0b0a0f;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
 #rotate p{font-size:20px;letter-spacing:.2em;color:#e6dada}
