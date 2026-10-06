@@ -1858,7 +1858,11 @@ applyQuality(qSetting);
 // ---- rigged heroine: load the GLB behind the loading screen; menu becomes usable when done (fallback: v0.4 procedural)
 function swapHero(R) {
   scene.remove(hero.root);
-  for (const k in guns) R.gunMount.add(guns[k].g);
+  for (const k in guns) {
+    const g = guns[k].g; R.gunMount.add(g);
+    // Quaternius hands are big: scale the guns up and push them forward so the slide/barrel clears the fingers
+    if (R.rigged) { g.scale.setScalar(k === 'pistol' ? 1.45 : 1.15); g.position.set(0, -0.012, k === 'pistol' ? 0.06 : 0.035); }
+  }
   hero = R; scene.add(R.root);
   R.root.position.set(P.pos.x, P.gy, P.pos.z); R.root.rotation.y = P.facing;
   applyQuality(qSetting);
