@@ -1871,6 +1871,7 @@ function setLoad(k, label) {
   setLoad(0.05, '載入角色模型…');
   let fake = 0.05, curK = 0; const tick = setInterval(() => { fake = Math.min(0.85, fake + 0.03); setLoad(Math.max(fake, curK)); }, 120);
   try {
+    if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
     const gltf = await loadHeroGLB(HERO_GLB + '?v=20261005c', k => { curK = 0.1 + k * 0.8; setLoad(curK); });
     setLoad(0.92, '組裝星璃…');
     swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
