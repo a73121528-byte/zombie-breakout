@@ -1397,7 +1397,7 @@ function animateRigged(dt) {
     pony.ax[i] = clamp(pony.ax[i], -0.4, 2.2); pony.az[i] = clamp(pony.az[i], -1, 1);
     if (i === 0) { // base: undo the head's world rotation, hang from root yaw; while rolling / dead follow the head
       // (world-hanging hair would poke into the ground when she is upside down or lying)
-      R.ponyFollow = lerp(R.ponyFollow || 0, st === 'dodge' || st === 'dead' ? 1 : 0, damp(st === 'dodge' ? 25 : 6, dt));
+      R.ponyFollow = lerp(R.ponyFollow || 0, st === 'dead' ? 1 : st === 'dodge' ? 0.55 : 0, damp(st === 'dodge' ? 25 : 6, dt));
       R.ponyBase.parent.getWorldQuaternion(_rq).invert();
       _rq2.setFromEuler(_re.set(0, P.facing, 0, 'YXZ'));
       R.ponyBase.quaternion.copy(_rq.multiply(_rq2)).slerp(_rq2.identity(), R.ponyFollow);
