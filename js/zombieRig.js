@@ -277,7 +277,7 @@ function visorCrackTex() {
   if (crackTex) return crackTex;
   const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
   g.fillStyle = 'rgba(30,40,50,0.55)'; g.fillRect(0, 0, 128, 128);
-  g.strokeStyle = 'rgba(230,235,240,0.9)'; g.lineWidth = 1.1;
+  g.strokeStyle = 'rgba(170,180,190,0.55)'; g.lineWidth = 0.9;
   const cx = 80, cy = 56;
   for (let i = 0; i < 13; i++) { const a = i / 13 * 6.28 + Math.random() * 0.3; let x = cx, y = cy; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 6; k++) { x += Math.cos(a + (Math.random() - 0.5) * 0.6) * 9; y += Math.sin(a + (Math.random() - 0.5) * 0.6) * 9; g.lineTo(x, y); } g.stroke(); }
   for (let r = 5; r < 26; r += 7) { g.beginPath(); g.arc(cx, cy, r, 0, 7); g.stroke(); }
@@ -342,6 +342,11 @@ function buildTemplate(type) {
     for (const s of [1, -1]) vk.add(GEO.box, vest, [0.16 * s, 0.76, -0.1], [0.07, 0.03, 0.26]);
     vk.add(GEO.box, 0x5a0a0c, [0.09, 0.58, 0.115], [0.06, 0.12, 0.004], [0, 0, 0.5]);
     vk.build(torsoM, vc());
+    const wk = partsKit();
+    wk.add(GEO.sph, 0x2e0608, [0.02, 0.62, -0.258], [0.085, 0.1, 0.025]);
+    wk.add(GEO.sph, 0x5a1014, [0.03, 0.64, -0.266], [0.05, 0.065, 0.018]); wk.add(GEO.sphLo, 0x6a1a1c, [-0.03, 0.6, -0.266], [0.03, 0.035, 0.015]);
+    for (let i = 0; i < 3; i++) wk.add(GEO.cyl, 0xb8a888, [0.0, 0.57 + i * 0.045, -0.27], [0.008, 0.11, 0.008], [0, 0, Math.PI / 2 + 0.15]);
+    wk.build(torsoM, vc({ emissive: 0x1a0204 }));
     // guard pose for the shield arm + shield on the forearm (built in that pose so it faces forward)
     const q0 = B.uaL.quaternion.clone(), q1 = B.laL.quaternion.clone();
     const gU = aimBone(B.uaL, B.laL, new THREE.Vector3(0.25, -0.6, 0.55));
@@ -373,7 +378,7 @@ function buildTemplate(type) {
   }
   if (type === 'boss') {
     const torsoM = boneMount(B.torso, 'zTorsoMount'), abM = boneMount(B.abdomen, 'zAbMount');
-    const BN = 0xb8a888, FL = 0x5a2226, FL2 = 0x6a3838, DK = 0x1a0a0c;
+    const BN = 0xb0a084, FL = 0x3e1a1e, FL2 = 0x4a2c2c, DK = 0x140608;
     const tk = partsKit(), sk = partsKit();
     // tumours (lumpy flesh clusters) on back, shoulders and flank
     const lumps = [[0.25, 1.1, -0.3, 0.13], [0.33, 1.02, -0.2, 0.09], [-0.28, 0.95, -0.34, 0.12], [-0.2, 1.18, -0.28, 0.08], [0.3, 0.72, 0.05, 0.1], [0.36, 0.8, -0.02, 0.07], [-0.33, 0.7, -0.1, 0.09], [0.05, 1.25, -0.35, 0.1], [-0.08, 0.86, -0.42, 0.11]];
@@ -393,16 +398,19 @@ function buildTemplate(type) {
     const cp = new THREE.Vector3(0, 0.84, 0.235);
     const rk = partsKit();
     rk.add(GEO.sph, DK, [cp.x, cp.y, cp.z - 0.02], [0.16, 0.18, 0.06]);
-    rk.add(GEO.tor, 0x7a2a2a, [cp.x, cp.y, cp.z - 0.005], [0.15, 0.17, 0.2]);
+    rk.add(GEO.tor, 0x4a1418, [cp.x, cp.y, cp.z - 0.005], [0.15, 0.17, 0.2]);
     for (let i = 0; i < 4; i++) for (const s of [1, -1]) rk.add(GEO.cyl, BN, [cp.x + s * 0.13, cp.y - 0.12 + i * 0.08, cp.z + 0.01], [0.012, 0.13, 0.012], [0, 0, s * (1.2 - i * 0.12)]);
     rk.build(abM, vc());
     const core = new THREE.Group(); core.name = 'core'; abM.add(core); core.position.copy(cp).sub(abM.userData.origin); core.position.z += 0.02;
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffd84a }); coreMat.name = 'core';
     const cm = new THREE.Mesh(GEO.sph, coreMat); cm.scale.set(0.085, 0.095, 0.06); core.add(cm);
-    if (ZR.glowSprite) core.add(ZR.glowSprite(0xffb020, 0.75, 0.7));
+    if (ZR.glowSprite) core.add(ZR.glowSprite(0xffb020, 0.42, 0.55));
     const veinMat = new THREE.MeshBasicMaterial({ color: 0xff9a2a }); veinMat.name = 'vein';
     const vk = partsKit();
-    for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283 + rng() * 0.3, L = 0.12 + rng() * 0.14, r0 = 0.16 + L / 2; vk.add(GEO.box, 0xffffff, [cp.x + Math.cos(a) * r0, cp.y + Math.sin(a) * r0 * 1.1, cp.z - 0.03 - L * 0.15], [L, 0.008, 0.008], [0, -0.3 * Math.cos(a), a]); }
+    for (let i = 0; i < 10; i++) { // crooked 3-segment veins crawling out of the socket
+      let a = i / 10 * 6.283 + rng() * 0.4, x = cp.x + Math.cos(a) * 0.15, y = cp.y + Math.sin(a) * 0.16, w = 0.007;
+      for (let k = 0; k < 3; k++) { const L = 0.04 + rng() * 0.05; a += (rng() - 0.5) * 0.9; const nx = x + Math.cos(a) * L, ny = y + Math.sin(a) * L; vk.add(GEO.box, 0xffffff, [(x + nx) / 2, (y + ny) / 2, cp.z - 0.035 - k * 0.012], [L * 1.1, w, w], [0, 0, a]); x = nx; y = ny; w *= 0.75; }
+    }
     const vm = vk.build(abM, veinMat); vm.castShadow = false; vm.userData.cast = false;
     T.coreMat = coreMat; T.veinMat = veinMat;
   }
