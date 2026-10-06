@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261006b';
-import { buildWorld } from './world.js?v=20261006b';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261006b';
-import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261006b';
-import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261006b';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261006b';
+import { Sfx } from './audio.js?v=20261006c';
+import { buildWorld } from './world.js?v=20261006c';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261006c';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261006c';
+import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261006c';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261006c';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -2014,11 +2014,11 @@ function setLoad(k, label) {
   let hK = 0, zK = FORCE_PROC_Z ? 1 : 0;
   const prog = () => { curK = 0.1 + (hK * 0.55 + zK * 0.45) * 0.8; setLoad(Math.max(fake, curK)); };
   initZombieRig({ glowSprite });
-  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261006b', k => { zK = k; prog(); })
+  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261006c', k => { zK = k; prog(); })
     .catch(e => { console.warn('rigged zombies unavailable, procedural fallback:', e && e.message ? e.message : e); return null; });
   try {
     if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
-    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261006b', k => { hK = k; prog(); });
+    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261006c', k => { hK = k; prog(); });
     setLoad(0.9, '組裝星璃…');
     swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
     window.__heroMode = 'rigged';
