@@ -167,7 +167,7 @@ function paintFace(F) {
   g.fillStyle = 'rgba(140,70,64,.30)'; g.beginPath(); g.ellipse(X(0), Y(F.noseY - 0.006), S(0.0068), S(0.0022), 0, 0, Math.PI * 2); g.fill();
   g.restore();
   g.fillStyle = 'rgba(110,50,50,.55)'; for (const sd of [-1, 1]) { g.beginPath(); g.ellipse(X(sd * 0.0042), Y(F.noseY - 0.0055), S(0.0016), S(0.0009), sd * 0.4, 0, Math.PI * 2); g.fill(); }
-  rad(0.0006, F.noseY + 0.0015, 0.004, [[0, 'rgba(255,240,236,.35)'], [1, 'rgba(255,240,236,0)']]);
+  rad(0.0006, F.noseY + 0.0015, 0.0035, [[0, 'rgba(255,240,236,.18)'], [1, 'rgba(255,240,236,0)']]);
   // lips
   const my = F.mouthY, mw = 0.0118;
   g.save(); g.filter = 'blur(' + S(0.0005) + 'px)';
@@ -358,8 +358,8 @@ export function buildRiggedHeroine(gltf, helpers) {
       // sculpt in head space before subdividing: soften the wedge nose (less protrusion, rounder tip)
       const Mi = M.clone().invert(), sv = new THREE.Vector3();
       const sculpt = P => { for (let i = 0; i < P.length; i += 3) { sv.set(P[i], P[i + 1], P[i + 2]).applyMatrix4(M);
-        const nx = sv.x / 0.018, ny = (sv.y - 0.056) / 0.03, k = Math.max(0, 1 - nx * nx - ny * ny);
-        if (k > 0 && sv.z > 0.11) { const f = k * k * (3 - 2 * k); sv.z = 0.11 + (sv.z - 0.11) * (1 - 0.6 * f); sv.applyMatrix4(Mi); P[i] = sv.x; P[i + 1] = sv.y; P[i + 2] = sv.z; } } };
+        const nx = sv.x / 0.018, ny = (sv.y - 0.058) / 0.034, k = Math.max(0, 1 - nx * nx - ny * ny);
+        if (k > 0 && sv.z > 0.11) { const f = k * k * (3 - 2 * k); sv.z = 0.11 + (sv.z - 0.11) * (1 - 0.72 * f); sv.applyMatrix4(Mi); P[i] = sv.x; P[i + 1] = sv.y; P[i + 2] = sv.z; } } };
       const geo = loopSubdivideSkinned(skin.geometry, 2, sculpt);
       const p = geo.attributes.position, uv = new Float32Array(p.count * 2), v = new THREE.Vector3();
       for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(M); uv[i * 2] = (v.x - FACE_BOX.x0) / (FACE_BOX.x1 - FACE_BOX.x0); uv[i * 2 + 1] = (v.y - FACE_BOX.y0) / (FACE_BOX.y1 - FACE_BOX.y0); }
