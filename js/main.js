@@ -825,7 +825,7 @@ function meleeHit(range, arc, dmg, knock, full = false, heavy = false) {
 function damagePlayer(dmg, fx, fz, src) {
   if (P.state === 'dead' || G.mode !== 'play') return;
   if (P.invuln > 0) { if (src !== 'puddle') floatText(new THREE.Vector3(P.pos.x, 1.9, P.pos.z), '閃避', 'heal'); return; }
-  P.hp = Math.max(0, P.hp - dmg);
+  P.hp = Math.max(0, P.hp - dmg); P.hitN = (P.hitN || 0) + 1; // hitN: rigged heroine plays HitRecieve on every hit
   vignetteV = 1; shake = Math.max(shake, dmg > 15 ? 0.45 : 0.2);
   floatText(new THREE.Vector3(P.pos.x, 1.9, P.pos.z), '-' + dmg, 'me');
   // non-gory impact puff for the heroine
@@ -1342,8 +1342,12 @@ function animateRigged(dt) {
   R.lastState = st; R.lastCombo = P.combo; R.lastT = P.t;
   const shot = INV.recoil > (R.lastRecoil ?? 0) + 0.05; R.lastRecoil = INV.recoil;
   let gunAim = false;
-  if (st === 'dead') R.play('Death', { once: true, fade: 0.12 });
-  else if (st === 'hurt') { if (entered) R.play('HitRecieve', { once: true, fade: 0.06, ts: 1.6, restart: true }); }
+  // light hits (no 'hurt' state) still flinch: short HitRecieve that overrides locomotion for ~0.3 s
+  const hitNew = (P.hitN || 0) !== (R.lastHitN ?? (P.hitN || 0)); R.lastHitN = P.hitN || 0;
+  R.flinch = Math.max(0, (R.flinch || 0) - dt);
+  if (st === 'dead') { if (entered) R.play('Death', { once: true, fade: 0.12, restart: true }); }
+  else if (st === 'hurt') { if (entered || hitNew) { R.play('HitRecieve', { once: true, fade: 0.06, ts: 1.6, restart: true }); R.flinch = 0.32; } }
+  else if (st === 'move' && (hitNew || R.flinch > 0)) { if (hitNew) { R.play(Math.random() < 0.5 ? 'HitRecieve' : 'HitRecieve_2', { once: true, fade: 0.05, ts: 1.8, start: 0.05, restart: true }); R.flinch = 0.3; } }
   else if (st === 'dodge') { if (entered) R.play('Roll', { once: true, fade: 0.05, ts: 1.55 / 0.5, start: 0.08, restart: true }); }
   else if (st === 'attack') {
     if (entered) {

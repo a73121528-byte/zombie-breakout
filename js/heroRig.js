@@ -20,7 +20,7 @@ export function loadHeroGLB(url, onProgress) {
 }
 
 const HC = {
-  coat: 0x1d1a22, coatHi: 0x2b2731, inner: 0x34303c, pants: 0x221f28, boot: 0x121015, bronze: 0x9a6232, bronzeHi: 0xc08040,
+  coat: 0x1d1a22, coatHi: 0x2b2731, inner: 0x34303c, pants: 0x221f28, boot: 0x1d1922, bronze: 0x9a6232, bronzeHi: 0xc08040,
   skin: 0xe8d4c8, eye: 0x1a1024, hair: 0x5a2f8c, hairHi: 0x8452c4, hairDk: 0x3a1c60, strap: 0x2c1c14, metal: 0x2e2a34,
 };
 // per-part recolor: [color, shininess, specular]
@@ -28,7 +28,7 @@ const RECOLOR = {
   head: { White: [HC.hair, 40, 0x50306a], DarkBrown: [HC.coat, 34, 0x2a2630], Skin: [HC.skin, 12, 0x221a1a], Black: [HC.eye, 60, 0x444444], Brown: [HC.hairDk, 20, 0x221a2a] },
   body: { Black: [HC.coatHi, 34, 0x2a2630], LightBrown: [HC.inner, 30, 0x2a2630], DarkBrown: [HC.coat, 38, 0x2e2a34], Skin: [HC.skin, 12, 0x221a1a], Gold: [HC.bronzeHi, 70, 0x8a6030], Metal: [HC.metal, 60, 0x605868] },
   legs: { Black: [HC.pants, 24, 0x222026] },
-  feet: { LightBrown: [HC.boot, 40, 0x2a2630], DarkBrown: [HC.strap, 30, 0x2a2630] },
+  feet: { LightBrown: [HC.boot, 22, 0x141218], DarkBrown: [HC.strap, 22, 0x1a1614] }, // low specular: boots read pale/grey under the street lamps otherwise
 };
 const LEATHER_KEYS = new Set(['head:DarkBrown', 'body:DarkBrown', 'body:Black', 'body:LightBrown']);
 
@@ -160,8 +160,8 @@ export function buildRiggedHeroine(gltf, helpers) {
     }
     // side locks falling in front of the shoulders
     for (const s of [1, -1]) {
-      L.push(colored(cap, HC.hair, [hcx + s * hw * 0.62, botY + 0.02, frontZ - 0.07], [0.05, 0, s * 0.08], [0.02, 0.1, 0.012]));
-      L.push(colored(cap, HC.hairHi, [hcx + s * hw * 0.5, botY + 0.0, frontZ - 0.055], [0.08, 0, s * 0.12], [0.014, 0.075, 0.01]));
+      L.push(colored(cap, HC.hair, [hcx + s * hw * 0.62, botY + 0.02, frontZ - 0.07], [0.05, 0, s * 0.08], [0.016, 0.1, 0.011]));
+      L.push(colored(cap, HC.hairHi, [hcx + s * hw * 0.5, botY + 0.0, frontZ - 0.055], [0.08, 0, s * 0.12], [0.011, 0.075, 0.009]));
     }
     const back = mergedMesh(L, hairMat); headM.add(back); R.hairBack = back;
   }
