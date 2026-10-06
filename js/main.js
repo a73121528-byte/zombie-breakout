@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Sfx } from './audio.js?v=20261006a';
 import { buildWorld } from './world.js?v=20261006a';
 import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261006a';
-import { loadHeroGLB, buildRiggedHeroine, HERO_GLB } from './heroRig.js?v=20261006a';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261006a';
 import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261006a';
 import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261006a';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
@@ -1396,6 +1396,8 @@ function lerpPose(a, b, k) { return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k)
 // ---- rigged heroine (female_hooded.glb): clip state machine + crossfades, gun aim, hair / coat secondary motion
 const SLASH_HIT = 0.47; // Sword_Slash: blade crosses the front at ~0.47 s (measured from the wrist path)
 const _rq = new THREE.Quaternion(), _rq2 = new THREE.Quaternion(), _re = new THREE.Euler(), _rv = new THREE.Vector3();
+const FOREGRIP = { shotgun: [0, 0.0, 0.32], rifle: [0, 0.012, 0.28] };
+const _ikT = new THREE.Vector3(), _ikB = new THREE.Vector3(), _ikU = new THREE.Vector3(), _ikP = new THREE.Vector3(), _lv1 = new THREE.Vector3(), _lv2 = new THREE.Vector3(), thighA = [0, 0];
 function animateRigged(dt) {
   const R = hero, t = G.time, run = P.run, st = P.state;
   const gunOut = isGun(INV.cur) && st !== 'skill';
@@ -1436,26 +1438,82 @@ function animateRigged(dt) {
   }
   R.mixer.update(dt);
   R.root.updateMatrixWorld(true);
+  // long guns: right hand pulled in so the stock sits at the shoulder (two-bone IK), the gun is then levelled in world space
+  const longGun = gunOut && (INV.cur === 'shotgun' || INV.cur === 'rifle') && (st === 'move' || st === 'hurt') && !INV.reloading;
+  R.ikW = lerp(R.ikW || 0, longGun ? (gunAim ? 1 : 0.8) : 0, damp(longGun ? 14 : 20, dt));
+  const cf = Math.cos(P.facing), sf = Math.sin(P.facing);
+  if (R.ikW > 0.01 && R.armR && R.armR.ua) {
+    R.armR.ua.getWorldPosition(_ikT); _ikP.copy(_ikT);
+    const fwd = gunAim ? 0.3 : 0.24, dn = gunAim ? 0.1 : 0.2;
+    _ikT.x += sf * fwd + cf * 0.07; _ikT.y -= dn; _ikT.z += cf * fwd - sf * 0.07;  // forward, down, slightly toward the centre line
+    _ikP.x += -cf * 0.3 - sf * 0.15; _ikP.y -= 0.4; _ikP.z += sf * 0.3 - cf * 0.15;  // elbow down / out (right) / back
+    ikTwoBone(R.armR, _ikT, _ikP, R.ikW);
+  }
   // gun: level toward the aim direction (or low-ready) in world space, independent of the clip's hand pose
   if (gunOut && st === 'move' || gunOut && st === 'hurt') {
     R.grip.getWorldQuaternion(_rq).invert();
     _rq2.setFromEuler(_re.set(gunAim ? -INV.recoil * 0.12 : 0.55, P.facing + (gunAim ? 0 : 0.35), 0, 'YXZ'));
     R.gunMount.quaternion.slerp(_rq.multiply(_rq2), gunAim ? 1 : damp(20, dt));
   } else R.gunMount.quaternion.identity();
+  // long guns: left hand onto the foregrip (two-bone IK on the left arm, after the clip + gun orientation)
+  if (R.ikW > 0.01 && R.armL && guns[INV.cur]) {
+    const g = guns[INV.cur].g, fg = FOREGRIP[INV.cur];
+    R.gunMount.updateWorldMatrix(false, true);
+    _ikT.set(fg[0], fg[1], fg[2]).applyMatrix4(g.matrixWorld);
+    _ikB.set(0, 0, 1).transformDirection(g.matrixWorld); _ikU.set(0, 1, 0).transformDirection(g.matrixWorld);
+    _ikT.addScaledVector(_ikB, -0.075).addScaledVector(_ikU, -0.035); // wrist sits behind / below the palm on the grip
+    R.armL.ua.getWorldPosition(_ikP);
+    _ikP.x += cf * 0.25 - sf * 0.1; _ikP.y -= 0.45; _ikP.z += -sf * 0.25 - cf * 0.1; // elbow down / out / slightly back
+    ikTwoBone(R.armL, _ikT, _ikP, R.ikW);
+  }
   // coat tails trail behind with speed (+ a little flutter)
   const skirtX = st === 'dodge' ? 0.5 : st === 'skill' ? 0.6 : 0.32 * run + Math.sin(t * 9) * 0.03 * run;
   R.skirt.rotation.x = lerp(R.skirt.rotation.x, skirtX, damp(8, dt));
   const skY = st === 'dodge' ? 0.45 : st === 'dead' ? 0.7 : 1; R.skirt.scale.y = lerp(R.skirt.scale.y, skY, damp(st === 'dodge' ? 30 : 8, dt));
+  // coat panels: upper hinge follows its thigh (front panels pushed by the forward leg, back panels by the trailing leg),
+  // lower hinge lags behind on a softer spring so the cloth bends; side flare with speed
+  if (R.coatPanels && R.legs && R.legs.L[0]) {
+    R.skirt.parent.getWorldQuaternion(_rq).invert();
+    for (let si = 0; si < 2; si++) {
+      const lg = si === 0 ? R.legs.L : R.legs.R;
+      lg[0].getWorldPosition(_lv1); lg[1].getWorldPosition(_lv2); _lv2.sub(_lv1).applyQuaternion(_rq);
+      thighA[si] = Math.atan2(_lv2.z, -_lv2.y);
+    }
+    const flare = st === 'dodge' ? 0.05 : 0.04 + run * 0.1 + (st === 'skill' ? 0.25 : 0);
+    for (let i = 0; i < R.coatPanels.length; i++) {
+      const c = R.coatPanels[i], a = thighA[c.side > 0 ? 0 : 1];
+      const tgt = st === 'dodge' ? 0 : c.front ? -Math.max(a, -0.15) * 0.85 : -Math.min(a, 0.1) * 0.7 + run * 0.1;
+      c.vx += ((tgt - c.ax) * 160 - c.vx * 16) * dt; c.ax = clamp(c.ax + c.vx * dt, -1.1, 1.1);
+      const bt = (tgt - c.ax) * 1.6 + run * (c.front ? 0.22 : 0.32) + Math.sin(t * 10 + i * 1.7) * 0.04 * run + (st === 'skill' ? 0.4 : 0);
+      c.vb += ((bt - c.bx) * 70 - c.vb * 9) * dt; c.bx = clamp(c.bx + c.vb * dt, -0.8, 1.2);
+      c.up.rotation.set(c.ax, 0, c.side * flare); c.lo.rotation.x = c.bx;
+    }
+  }
+  // back hair: three spring groups swaying with turns, speed and vertical motion
+  if (R.hairGroups) {
+    const hs = R.hs || (R.hs = { ax: [0, 0, 0], vx: [0, 0, 0], az: [0, 0, 0], vz: [0, 0, 0] });
+    const turnH = angDiff(R.hLastF ?? P.facing, P.facing) / Math.max(dt, 1e-3); R.hLastF = P.facing;
+    for (let i = 0; i < 3; i++) {
+      const tx = run * 0.3 + (st === 'dodge' ? 0.25 : 0) + (st === 'skill' ? 0.4 : 0) + Math.sin(t * 1.3 + i) * 0.02;
+      const tz = clamp(-turnH * 0.025, -0.35, 0.35) + Math.sin(t * 1.7 + i * 2) * 0.015;
+      hs.vx[i] += ((tx - hs.ax[i]) * (55 - i * 4) - hs.vx[i] * 8) * dt; hs.vz[i] += ((tz - hs.az[i]) * 45 - hs.vz[i] * 7) * dt;
+      hs.ax[i] = clamp(hs.ax[i] + hs.vx[i] * dt, -0.3, 0.9); hs.az[i] = clamp(hs.az[i] + hs.vz[i] * dt, -0.5, 0.5);
+      R.hairGroups[i].rotation.set(hs.ax[i], 0, hs.az[i]);
+    }
+  }
   // ponytail: spring chain hanging in world space (yaw = facing) so it reacts to turns / speed
   const turn = angDiff(pony.lastFacing, P.facing) / Math.max(dt, 1e-3); pony.lastFacing = P.facing;
   R.ponyBase.parent.getWorldPosition(_rv); const vy = (_rv.y - pony.lastY) / Math.max(dt, 1e-3); pony.lastY = _rv.y;
-  for (let i = 0; i < 3; i++) {
-    const tx = (i === 0 ? 0.22 : 0.1) + run * (0.55 - i * 0.12) + (st === 'skill' ? 0.9 : 0) + (st === 'dodge' ? 0.2 : 0);
-    const tz = clamp(-turn * 0.03 * (i + 1), -0.8, 0.8);
-    pony.vx[i] += ((tx - pony.ax[i]) * 70 - pony.vx[i] * 9) * dt - clamp(vy, -6, 6) * 0.15 * (i + 1) * dt * 10;
-    pony.vz[i] += ((tz - pony.az[i]) * 60 - pony.vz[i] * 8) * dt;
-    pony.ax[i] += pony.vx[i] * dt; pony.az[i] += pony.vz[i] * dt;
-    pony.ax[i] = clamp(pony.ax[i], -0.4, 2.2); pony.az[i] = clamp(pony.az[i], -1, 1);
+  const ps = R.ps || (R.ps = { ax: R.pony.map(() => 0), vx: R.pony.map(() => 0), az: R.pony.map(() => 0), vz: R.pony.map(() => 0) });
+  for (let i = 0; i < R.pony.length; i++) {
+    // softer springs further down the chain = smoother, lagging sway
+    const tx = (i === 0 ? 0.2 : 0.07) + run * (0.45 - i * 0.07) + (st === 'skill' ? 0.7 / (i + 1) : 0) + (st === 'dodge' ? 0.15 : 0) + Math.sin(t * 2.1 - i * 0.8) * 0.025;
+    const tz = clamp(-turn * 0.022 * (i + 1), -0.7, 0.7) + Math.sin(t * 1.6 - i * 0.9) * 0.02;
+    const kx = 62 - i * 9, cx = 8.5 - i * 0.8;
+    ps.vx[i] += ((tx - ps.ax[i]) * kx - ps.vx[i] * cx) * dt - clamp(vy, -6, 6) * 0.12 * (i + 1) * dt * 10;
+    ps.vz[i] += ((tz - ps.az[i]) * (52 - i * 8) - ps.vz[i] * (7.5 - i * 0.7)) * dt;
+    ps.ax[i] += ps.vx[i] * dt; ps.az[i] += ps.vz[i] * dt;
+    ps.ax[i] = clamp(ps.ax[i], -0.4, 2.0); ps.az[i] = clamp(ps.az[i], -0.9, 0.9);
     if (i === 0) { // base: undo the head's world rotation, hang from root yaw; while rolling / dead follow the head
       // (world-hanging hair would poke into the ground when she is upside down or lying)
       R.ponyFollow = lerp(R.ponyFollow || 0, st === 'dead' ? 1 : st === 'dodge' ? 0.55 : 0, damp(st === 'dodge' ? 25 : 6, dt));
@@ -1463,7 +1521,7 @@ function animateRigged(dt) {
       _rq2.setFromEuler(_re.set(0, P.facing, 0, 'YXZ'));
       R.ponyBase.quaternion.copy(_rq.multiply(_rq2)).slerp(_rq2.identity(), R.ponyFollow);
     }
-    R.pony[i].rotation.set(pony.ax[i], 0, pony.az[i]);
+    R.pony[i].rotation.set(ps.ax[i], 0, ps.az[i]);
   }
   // invulnerability shimmer + star twinkle
   const em = P.invuln > 0 && st === 'dodge' ? 0x140a20 : 0x050308; // subtle i-frame shimmer
