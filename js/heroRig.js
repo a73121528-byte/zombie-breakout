@@ -112,12 +112,17 @@ export function buildRiggedHeroine(gltf, helpers) {
       sword.matrixWorld.decompose(sp, sq, ss);
       const sms = sword.isMesh ? [sword] : sword.children.filter(c => c.isMesh);
       if (sms.length) {
+        // quantized geometry is re-centred, so derive the blade direction from the hand -> blade centre
         const bb = new THREE.Box3(); for (const m of sms) { m.geometry.computeBoundingBox(); bb.union(m.geometry.boundingBox); }
-        const ext = [0, 1, 2].map(i => Math.max(Math.abs(bb.min.getComponent(i)), Math.abs(bb.max.getComponent(i))));
         const size = [0, 1, 2].map(i => bb.max.getComponent(i) - bb.min.getComponent(i));
-        const ia = ext.indexOf(Math.max(...ext)), it = size.indexOf(Math.min(...size));
-        bladeAxis = new THREE.Vector3().setComponent(ia, Math.abs(bb.max.getComponent(ia)) >= Math.abs(bb.min.getComponent(ia)) ? 1 : -1);
+        const ia = size.indexOf(Math.max(...size)), it = size.indexOf(Math.min(...size));
+        const hand = new THREE.Vector3(); (model.getObjectByName('Middle1R') || B.wristR).getWorldPosition(hand);
+        const cW = bb.getCenter(new THREE.Vector3()).applyMatrix4(sms[0].matrixWorld);
+        const axW = new THREE.Vector3().setComponent(ia, 1).applyQuaternion(sq);
+        bladeAxis = new THREE.Vector3().setComponent(ia, axW.dot(cW.clone().sub(hand)) >= 0 ? 1 : -1);
         flatAxis = new THREE.Vector3().setComponent(it === ia ? (ia + 1) % 3 : it, 1);
+        const wr = new THREE.Vector3(); B.wristR.getWorldPosition(wr);
+        sp.copy(hand).lerp(wr, 0.35); // grip point: between the knuckles and the wrist
       }
       sword.visible = false;
     } else B.wristR.getWorldPosition(sp), B.wristR.getWorldQuaternion(sq);
@@ -150,8 +155,8 @@ export function buildRiggedHeroine(gltf, helpers) {
     for (let i = 0; i < 11; i++) {
       const a = (i / 10 - 0.5) * 2.3, r = hw * 0.78;
       const x = hcx + Math.sin(a) * r, z = backZ * 0.55 + Math.cos(a + Math.PI) * -r * 0.35 - Math.abs(Math.sin(a)) * 0.01;
-      const len = 0.24 - Math.abs(a) * 0.035;
-      L.push(colored(cap, [HC.hair, HC.hairHi, HC.hairDk][i % 3], [x, botY + 0.05 - len / 2, z - 0.015], [0.18 + Math.abs(a) * 0.05, 0, -Math.sin(a) * 0.12], [0.026, len / 2, 0.012]));
+      const len = 0.34 - Math.abs(a) * 0.05;
+      L.push(colored(cap, [HC.hair, HC.hairHi, HC.hairDk][i % 3], [x, botY + 0.05 - len / 2, z - 0.015], [0.18 + Math.abs(a) * 0.05, 0, -Math.sin(a) * 0.12], [0.03, len / 2, 0.013]));
     }
     // side locks falling in front of the shoulders
     for (const s of [1, -1]) {
@@ -180,19 +185,19 @@ export function buildRiggedHeroine(gltf, helpers) {
   // star hair ornament on the hood's left temple + glow
   const starMat = new THREE.MeshLambertMaterial({ color: 0xffd36a, emissive: 0x8a5a10 });
   const star = new THREE.Mesh(starGeo(), starMat);
-  star.position.set(hcx + hw * 0.92, topY - 0.085, frontZ - 0.06); star.rotation.set(0, 1.25, -0.3); star.scale.setScalar(0.034); headM.add(star);
+  star.position.set(hcx + hw * 0.8, topY - 0.11, frontZ - 0.045); star.rotation.set(0, 1.25, -0.3); star.scale.setScalar(0.034); headM.add(star);
   const starGlow = glowSprite(0xffc860, 0.12, 0.5); starGlow.position.copy(star.position); headM.add(starGlow);
   R.star = star;
   // ---- coat tails: two open-front layers from the waist to the knees, bronze hems (double sided)
   const coatSide = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 34, specular: 0x2a2630, side: THREE.DoubleSide, emissive: 0x050308 });
   shimmer.push(coatSide);
   {
-    const waistY = lb.max.y - 0.02, rx = Math.max(0.13, (lb.max.x - lb.min.x) / 2 * 0.98), zc = (lb.max.z + lb.min.z) / 2;
+    const waistY = lb.max.y - 0.03, rx = 0.15, zc = 0.0;
     const prof = (r0, r1, y0, len) => [[r0, y0 + 0.02], [r0 * 1.04, y0 - len * 0.18], [lerp(r0, r1, 0.55), y0 - len * 0.55], [r1, y0 - len]].map(([r, y]) => new THREE.Vector2(r, y));
     const L = [];
-    const outer = new THREE.LatheGeometry(prof(rx * 1.02, rx * 1.65, waistY, 0.58), 22, 0.62, Math.PI * 2 - 1.24);
+    const outer = new THREE.LatheGeometry(prof(rx * 1.02, rx * 1.6, waistY, 0.6), 22, 0.62, Math.PI * 2 - 1.24);
     L.push(colored(outer, HC.coat, [0, 0, zc], [0, 0, 0], [1, 1, 0.85]));
-    const hem = new THREE.LatheGeometry([new THREE.Vector2(rx * 1.6, waistY - 0.55), new THREE.Vector2(rx * 1.66, waistY - 0.585)], 22, 0.62, Math.PI * 2 - 1.24);
+    const hem = new THREE.LatheGeometry([new THREE.Vector2(rx * 1.56, waistY - 0.57), new THREE.Vector2(rx * 1.61, waistY - 0.605)], 22, 0.62, Math.PI * 2 - 1.24);
     L.push(colored(hem, HC.bronze, [0, 0, zc], [0, 0, 0], [1.01, 1, 0.86]));
     const top = new THREE.LatheGeometry(prof(rx * 1.07, rx * 1.4, waistY + 0.01, 0.3), 22, 0.95, Math.PI * 2 - 1.9);
     L.push(colored(top, HC.coatHi, [0, 0, zc], [0, 0, 0], [1, 1, 0.88]));
@@ -206,7 +211,7 @@ export function buildRiggedHeroine(gltf, helpers) {
   }
   // ---- holstered machete on the back (shown when a gun is out)
   const holster = new THREE.Group(); holster.name = 'holster'; chestM.add(holster);
-  holster.position.set(-0.04, (cb.max.y + cb.min.y) / 2 + 0.02, cb.min.z - 0.015); holster.rotation.set(Math.PI / 2, 0, 0.55, 'ZYX');
+  holster.position.set(-0.05, 0.02, cb.min.z - 0.03); holster.rotation.set(Math.PI / 2, 0, 0.55, 'ZYX');
   const hm = buildMachete(); hm.scale.setScalar(0.95); holster.add(hm); holster.visible = false;
   R.holster = holster;
   R.mats = { coat: shimmer[0], coatSide, star: starMat, face: null, shimmer, hair: hairMat };

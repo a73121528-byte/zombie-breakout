@@ -24,6 +24,7 @@ const QUALITY = {
 };
 let qSetting = 'auto';
 try { qSetting = localStorage.getItem('zb_quality') || 'auto'; } catch (e) { }
+if (qSetting !== 'auto' && !QUALITY[qSetting]) qSetting = 'auto';
 function detectQuality(gl) {
   const ua = navigator.userAgent || '';
   const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || matchMedia('(pointer:coarse)').matches;
@@ -1379,6 +1380,7 @@ function animateRigged(dt) {
   // coat tails trail behind with speed (+ a little flutter)
   const skirtX = st === 'dodge' ? 0.5 : st === 'skill' ? 0.6 : 0.32 * run + Math.sin(t * 9) * 0.03 * run;
   R.skirt.rotation.x = lerp(R.skirt.rotation.x, skirtX, damp(8, dt));
+  const skY = st === 'dodge' ? 0.45 : st === 'dead' ? 0.7 : 1; R.skirt.scale.y = lerp(R.skirt.scale.y, skY, damp(st === 'dodge' ? 30 : 8, dt));
   // ponytail: spring chain hanging in world space (yaw = facing) so it reacts to turns / speed
   const turn = angDiff(pony.lastFacing, P.facing) / Math.max(dt, 1e-3); pony.lastFacing = P.facing;
   R.ponyBase.parent.getWorldPosition(_rv); const vy = (_rv.y - pony.lastY) / Math.max(dt, 1e-3); pony.lastY = _rv.y;
