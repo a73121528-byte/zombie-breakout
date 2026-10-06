@@ -1389,21 +1389,23 @@ function animateRigged(dt) {
   const turn = angDiff(pony.lastFacing, P.facing) / Math.max(dt, 1e-3); pony.lastFacing = P.facing;
   R.ponyBase.parent.getWorldPosition(_rv); const vy = (_rv.y - pony.lastY) / Math.max(dt, 1e-3); pony.lastY = _rv.y;
   for (let i = 0; i < 3; i++) {
-    const tx = (i === 0 ? 0.22 : 0.1) + run * (0.55 - i * 0.12) + (st === 'skill' ? 0.9 : 0) + (st === 'dodge' ? 0.8 : 0);
+    const tx = (i === 0 ? 0.22 : 0.1) + run * (0.55 - i * 0.12) + (st === 'skill' ? 0.9 : 0) + (st === 'dodge' ? 0.2 : 0);
     const tz = clamp(-turn * 0.03 * (i + 1), -0.8, 0.8);
     pony.vx[i] += ((tx - pony.ax[i]) * 70 - pony.vx[i] * 9) * dt - clamp(vy, -6, 6) * 0.15 * (i + 1) * dt * 10;
     pony.vz[i] += ((tz - pony.az[i]) * 60 - pony.vz[i] * 8) * dt;
     pony.ax[i] += pony.vx[i] * dt; pony.az[i] += pony.vz[i] * dt;
     pony.ax[i] = clamp(pony.ax[i], -0.4, 2.2); pony.az[i] = clamp(pony.az[i], -1, 1);
-    if (i === 0) { // base: undo the head's world rotation, hang from root yaw
+    if (i === 0) { // base: undo the head's world rotation, hang from root yaw; while rolling / dead follow the head
+      // (world-hanging hair would poke into the ground when she is upside down or lying)
+      R.ponyFollow = lerp(R.ponyFollow || 0, st === 'dodge' || st === 'dead' ? 1 : 0, damp(st === 'dodge' ? 25 : 6, dt));
       R.ponyBase.parent.getWorldQuaternion(_rq).invert();
       _rq2.setFromEuler(_re.set(0, P.facing, 0, 'YXZ'));
-      R.ponyBase.quaternion.copy(_rq.multiply(_rq2));
+      R.ponyBase.quaternion.copy(_rq.multiply(_rq2)).slerp(_rq2.identity(), R.ponyFollow);
     }
     R.pony[i].rotation.set(pony.ax[i], 0, pony.az[i]);
   }
   // invulnerability shimmer + star twinkle
-  const em = P.invuln > 0 && st === 'dodge' ? 0x2a1040 : 0x050308;
+  const em = P.invuln > 0 && st === 'dodge' ? 0x1c0c2c : 0x050308; // subtle i-frame shimmer
   for (const m of R.mats.shimmer) m.emissive.setHex(em);
   R.star.material.emissiveIntensity = 0.8 + Math.sin(t * 3) * 0.3;
 }
