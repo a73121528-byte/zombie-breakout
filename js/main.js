@@ -3,6 +3,7 @@ import { Sfx } from './audio.js?v=20261006a';
 import { buildWorld } from './world.js?v=20261006a';
 import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261006a';
 import { loadHeroGLB, buildRiggedHeroine, HERO_GLB } from './heroRig.js?v=20261006a';
+import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261006a';
 import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261006a';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
@@ -395,10 +396,13 @@ const ZCFG = {
 };
 const ZNAME = { walker: '行屍', runner: '疾行者', brute: '巨屍', spitter: '噴吐者', armored: '裝甲屍', boss: '融合巨獸' };
 const zombies = [];
+const FORCE_PROC_Z = /[?&]zombie=proc/.test(location.search);
 function applyShadowFlags(root) { root.traverse(o => { if (o.isMesh) o.castShadow = !!o.userData.cast && Q.shadow > 0; }); }
 function spawnZombie(type, x, z) {
   const cfg = ZCFG[type];
-  const rig = type === 'boss' ? buildBoss() : buildZombie(type);
+  let rig = null;
+  if (zombieRigReady() && !FORCE_PROC_Z) { try { rig = buildRiggedZombie(type, cfg.scale); } catch (e) { console.warn('rigged zombie failed, procedural fallback:', e && e.message); rig = null; } }
+  if (!rig) rig = type === 'boss' ? buildBoss() : buildZombie(type);
   rig.root.scale.setScalar(cfg.scale);
   applyShadowFlags(rig.root);
   const blob = new THREE.Mesh(blobGeo, blobMat); blob.scale.setScalar(cfg.r * 1.4); blob.position.y = 0.022; scene.add(blob);
@@ -421,7 +425,7 @@ function setFlash(z, on) {
 }
 function removeZombie(z) {
   scene.remove(z.lift); scene.remove(z.blob);
-  z.rig.mats.forEach(m => m.dispose());
+  if (z.rig.rigged) disposeRiggedZombie(z.rig); else z.rig.mats.forEach(m => m.dispose());
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i, 1);
 }
 function damageZombie(z, dmg, dirX, dirZ, knock, opts = {}) {
@@ -517,6 +521,7 @@ function giveAmmo() {
 
 function animZombie(z, dt) {
   const R = z.rig, cfg = z.cfg, T = z.type;
+  if (R.rigged) { animZombieRigged(z, dt); return; }
   const sp = z.speedNow;
   z.phase += dt * (2 + sp * (z.isBoss ? 1.6 : T === 'runner' ? 2.3 : T === 'brute' ? 2.0 : 2.6));
   const ph = z.phase;
@@ -582,6 +587,60 @@ function animZombie(z, dt) {
     if (R.coreMat) R.coreMat.color.setRGB(1, 0.7 + 0.3 * hb, 0.2 + 0.4 * hb);
     if (R.veinMat) R.veinMat.color.setRGB(0.55 + 0.45 * hb, 0.25 + 0.4 * hb, 0.06 + 0.1 * hb);
     if (R.jaw) R.jaw.rotation.x = 0.15 + Math.max(0, Math.sin(ph * 0.4)) * 0.35 + (z.state === 'attack' ? 0.4 : 0);
+  }
+}
+// ---- rigged zombies (zombieRig.js): clip state machine + procedural spine/head offsets; far / off-screen mixers update at a lower rate
+const _zFr = new THREE.Frustum(), _zPm = new THREE.Matrix4(), _zSp = new THREE.Sphere();
+function zFrustumUpdate() { _zPm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _zFr.setFromProjectionMatrix(_zPm); }
+function animZombieRigged(z, dt) {
+  const R = z.rig, cfg = z.cfg, T = z.type, st = z.state;
+  z.phase += dt * 2;
+  _zSp.center.set(z.pos.x, z.gy + (z.isBoss ? 2.2 : 0.9 * cfg.scale), z.pos.z); _zSp.radius = z.isBoss ? 4 : 1.5 * cfg.scale;
+  const vis = _zFr.intersectsSphere(_zSp);
+  const cdx = camera.position.x - z.pos.x, cdz = camera.position.z - z.pos.z, d2 = cdx * cdx + cdz * cdz;
+  // hide off-screen zombies that are not close (skinned meshes have frustumCulled=false)
+  z.lift.visible = vis || d2 < 64;
+  const low = Q === QUALITY.low;
+  const interval = !vis ? 0.25 : d2 > 1156 ? 0.1 : d2 > 400 ? (low ? 0.1 : 0.05) : (low && d2 > 144) ? 0.033 : 0;
+  const entered = st !== R.lastState || (st === 'attack' && z.t < (R.lastT ?? 0)); R.lastState = st; R.lastT = z.t;
+  const sm = R.speed, sp = z.speedNow;
+  if (st === 'dead') { if (entered) R.play('Death', { once: true, fade: 0.1, ts: 0.85 + Math.random() * 0.25 }); }
+  else if (st === 'rise') { if (entered) R.play('Idle_Attack', { fade: 0, ts: 0.9 }); }
+  else if (st === 'attack') {
+    if (entered) {
+      const w = z.attack === 'slam' ? 1.1 : cfg.wind;
+      if (z.attack === 'spit') R.play('Idle', { fade: 0.15, ts: 1.6 });
+      else if (z.attack === 'slam') R.play('Idle_Attack', { once: true, fade: 0.2, restart: true, start: 0.2, ts: clamp(1.0 / w, 0.6, 1.4) });
+      else if (T === 'runner') R.play('Run_Attack', { once: true, fade: 0.08, restart: true, ts: clamp(0.32 / w, 0.6, 1.5) });
+      else R.play('Punch', { once: true, fade: 0.12, restart: true, ts: clamp(0.36 / w, 0.4, 1.4) });
+    }
+  } else if (st === 'hurt') { if (entered) R.play('HitReact', { once: true, fade: 0.06, restart: true, ts: 1.45 }); }
+  else if (sp < 0.15) R.play('Idle', { fade: 0.35, ts: sm });
+  else if (T === 'runner' && sp > 2.4) R.play('Run_Arms', { fade: 0.2, ts: clamp(sp / Math.max(0.5, R.natRun * cfg.scale), 0.6, 1.5) });
+  else R.play('Walk', { fade: 0.3, ts: clamp(sp / Math.max(0.3, R.natWalk * cfg.scale), 0.5, T === 'runner' ? 2.4 : 1.9) });
+  R.acc += dt;
+  if (R.acc >= interval) { R.mixer.update(R.acc); R.acc = 0; R.postMix(st === 'dead' || st === 'rise' ? 0 : 1); }
+  // procedural layer: hunch, hit flinch, rear-back for spit / slam, lolling / twitching head
+  z.hitK = Math.max(0, z.hitK - dt * 5);
+  const hk = z.hitK > 0 ? Math.sin(Math.min(1, z.hitK) * Math.PI * 0.5) : 0;
+  let hunch = R.hunch, nod = R.nod;
+  if (st === 'attack') {
+    const w = z.attack === 'slam' ? 1.1 : cfg.wind, k = Math.min(1, z.t / w);
+    if (z.attack === 'spit') { if (z.t < w) { hunch -= 0.45 * k; nod -= 0.35 * k; } else { hunch += 0.4; nod += 0.25; } if (R.sac) R.sac.scale.setScalar(1 + (z.t < w ? k * 0.5 : 0)); }
+    else if (z.attack === 'slam') { if (z.t < w) hunch -= 0.35 * k; else hunch += 0.45; }
+    else if (z.t < w) hunch -= 0.12 * k; else hunch += 0.18;
+  } else if (st === 'rise') hunch += 0.35;
+  else if (st === 'dead') { hunch *= 0.4; nod = 0; }
+  hunch -= hk * (z.isBoss ? 0.15 : 0.4); nod -= hk * 0.35;
+  z.twitchT -= dt; if (z.twitchT <= 0) { z.twitchT = 0.15 + Math.random() * (T === 'runner' ? 0.4 : 1.6); z.twitch = (Math.random() - 0.5) * (T === 'runner' ? 0.7 : 0.3); }
+  R.hS = lerp(R.hS ?? hunch, hunch, damp(hk > 0 ? 30 : 10, dt)); R.nS = lerp(R.nS ?? nod, nod, damp(12, dt));
+  R.rS = lerp(R.rS ?? 0, st === 'dead' ? 0 : Math.sin(z.phase * 0.6) * 0.16 + z.twitch + z.hitSide * hk * 0.2, damp(T === 'runner' ? 22 : 4, dt));
+  R.pose(R.hS, R.nS, R.rS);
+  if (R.sacMat) { const pulse = 0.5 + 0.5 * Math.sin(G.time * 4 + z.phase); R.sacMat.emissiveIntensity = z.flash > 0 ? 1.4 : 0.6 + pulse * 0.6 + (st === 'attack' ? 0.8 : 0); if (R.sac && st !== 'attack') R.sac.scale.setScalar(1 + pulse * 0.08); }
+  if (R.core) {
+    const hb = Math.pow(Math.max(0, Math.sin(G.time * 5.2)), 6), pulse = 0.85 + hb * 0.35 + Math.sin(G.time * 2.6) * 0.05; R.core.scale.setScalar(pulse);
+    if (R.coreMat) R.coreMat.color.setRGB(1, 0.7 + 0.3 * hb, 0.2 + 0.4 * hb);
+    if (R.veinMat) R.veinMat.color.setRGB(0.55 + 0.45 * hb, 0.25 + 0.4 * hb, 0.06 + 0.1 * hb);
   }
 }
 function zLOS(z) {
@@ -677,6 +736,7 @@ function updateZombie(z, dt) {
       const kb = Math.min(1, z.t / 0.3), eb = kb * (2 - kb);                    // knees buckle
       const kf = clamp((z.t - 0.22) / 0.5, 0, 1), ef = kf * kf;                // then topple (accelerating)
       const bounce = kf >= 1 ? Math.max(0, Math.sin((z.t - 0.72) * 14)) * Math.exp(-(z.t - 0.72) * 8) * 0.12 : 0;
+      if (!RG.rigged) {
       RG.body.rotation.x = fwd * (Math.PI / 2 * 0.93 * ef - bounce);
       RG.body.rotation.z = z.deadSide * ef;
       RG.body.position.y = lerp(lerp(base, 0.62 * sc, eb), (fwd > 0 ? 0.2 : 0.24) * sc, ef);
@@ -687,6 +747,7 @@ function updateZombie(z, dt) {
       RG.armL.rotation.x = lerp(RG.armL.rotation.x, fwd > 0 ? -2.8 : -0.4, damp(6, dt)); RG.armR.rotation.x = lerp(RG.armR.rotation.x, fwd > 0 ? -2.5 : 0.3, damp(5, dt));
       RG.armL.rotation.z = lerp(RG.armL.rotation.z, 0.6, damp(5, dt)); RG.armR.rotation.z = lerp(RG.armR.rotation.z, -0.5, damp(5, dt));
       if (RG.jaw) RG.jaw.rotation.x = lerp(RG.jaw.rotation.x, 0.7, damp(4, dt));
+      }
       if (kf >= 1 && !z.landed) { z.landed = true; burst(new THREE.Vector3(z.pos.x + Math.sin(z.facing) * fwd * 0.9 * sc, 0.15, z.pos.z + Math.cos(z.facing) * fwd * 0.9 * sc), z.isBoss ? 16 : 6, 'dust', 3, 0.15, 2); }
       if (z.t > 1.4) {
         const f = 1 - Math.min(1, (z.t - 1.4) / 1.0);
@@ -1683,7 +1744,8 @@ function applyQuality(setting) {
   if (shadowOn) { moon.shadow.mapSize.set(Q.shadow, Q.shadow); if (moon.shadow.map) { moon.shadow.map.dispose(); moon.shadow.map = null; } }
   hero.root.traverse(o => { if (o.isMesh) o.castShadow = shadowOn && o.userData.cast !== false; });
   const det = key !== 'low', cb = key === 'high'; setCharDetail(cb); applyCharBump([hero.mats.coat, hero.mats.coatSide], cb);
-  for (const z of zombies) applyCharBump(z.rig.mats, cb);
+  setZombieQuality(key === 'low');
+  for (const z of zombies) { applyCharBump(z.rig.mats, cb); if (z.rig.rigged) applyZombieDetail(z.rig.mats); }
   W.setQuality(key); rimLight.visible = det;
   for (const z of zombies) applyShadowFlags(z.rig.root);
   fireLights.forEach((l, i) => l.visible = i < Q.fires);
@@ -1830,6 +1892,7 @@ function frame() {
     if (G.mode === 'play' && P.state !== 'dead') G.playTime += dt;
     updateGun(dt);
     updatePlayer(dt);
+    zFrustumUpdate();
     for (let i = zombies.length - 1; i >= 0; i--) if (zombies[i]) updateZombie(zombies[i], dt);
     separateZombies();
     updateProjectiles(dt);
@@ -1871,6 +1934,15 @@ function swapHero(R) {
   refreshWeaponVisuals();
   try { renderer.compile(scene, camera); } catch (e) { }
 }
+function warmRiggedZombies() {
+  // compile the zombie skin shader / gear materials once behind the loading screen
+  try {
+    const tmp = RIG_TYPES.map(t => buildRiggedZombie(t, ZCFG[t].scale));
+    tmp.forEach((r, i) => { r.root.position.set(i * 3 - 7, -50, -5); scene.add(r.root); });
+    renderer.compile(scene, camera);
+    tmp.forEach(r => { scene.remove(r.root); disposeRiggedZombie(r); });
+  } catch (e) { console.warn('zombie warm-up failed', e && e.message); }
+}
 function setLoad(k, label) {
   const bar = $('ldBar'), pct = $('ldPct'), txt = $('ldTxt');
   if (bar) bar.style.width = Math.round(k * 100) + '%';
@@ -1880,16 +1952,25 @@ function setLoad(k, label) {
 (async function bootHero() {
   setLoad(0.05, '載入角色模型…');
   let fake = 0.05, curK = 0; const tick = setInterval(() => { fake = Math.min(0.85, fake + 0.03); setLoad(Math.max(fake, curK)); }, 120);
+  // rigged zombies load in parallel with the heroine (procedural fallback on failure or ?zombie=proc)
+  let hK = 0, zK = FORCE_PROC_Z ? 1 : 0;
+  const prog = () => { curK = 0.1 + (hK * 0.55 + zK * 0.45) * 0.8; setLoad(Math.max(fake, curK)); };
+  initZombieRig({ glowSprite });
+  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261006a', k => { zK = k; prog(); })
+    .catch(e => { console.warn('rigged zombies unavailable, procedural fallback:', e && e.message ? e.message : e); return null; });
   try {
     if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
-    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261006a', k => { curK = 0.1 + k * 0.8; setLoad(curK); });
-    setLoad(0.92, '組裝星璃…');
+    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261006a', k => { hK = k; prog(); });
+    setLoad(0.9, '組裝星璃…');
     swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
     window.__heroMode = 'rigged';
   } catch (e) {
     console.warn('rigged heroine unavailable, using procedural fallback:', e && e.message ? e.message : e);
     window.__heroMode = 'procedural';
   }
+  setLoad(Math.max(curK, 0.92), '載入喪屍模型…');
+  const zr = await zLoad; window.__zombieMode = zr ? 'rigged' : 'procedural';
+  if (zr) warmRiggedZombies();
   clearInterval(tick);
   setLoad(1, '準備完成');
   await new Promise(r => setTimeout(r, 180));
@@ -1898,4 +1979,4 @@ function setLoad(k, label) {
 frame();
 
 // debug/test hook
-window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, get hero() { return hero; }, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
+window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, get hero() { return hero; }, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; for (const z of zombies) z.lift.visible = true; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
