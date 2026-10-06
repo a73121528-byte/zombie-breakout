@@ -8,3 +8,7 @@ v0.3: much bigger city map (~170 m x 170 m: 3x3 road grid with 9 intersections, 
       gas station, bus stop, police checkpoint, collapsed building, road-end barricades at the map bounds), ~90 procedural vehicles
       (sedan/hatchback/SUV/pickup/van/taxi/police/ambulance/bus with wheels+rims, lights, plates, mirrors, damage, fires, overturned),
       oriented-box collision for cars/props, flow-field zombie pathing across the map, minimap with compass + tap-to-open full map.
+v0.5: rigged heroine 星璃 (Quaternius female_hooded.glb, CC0) and rigged zombies (zombie_a / zombie_chubby, CC0) in js/zombieRig.js:
+      per-instance SkeletonUtils clone + AnimationMixer, generated skin shader (bruises, veins, blood, torn clothes), smaller head,
+      hunch pivots, glowing eyes, type gear (spitter sac, riot helmet/visor/vest/shield, boss spikes/tumours/core); far mixers throttled.
+      Fallbacks: ?hero=proc and ?zombie=proc force the v0.4 procedural models.
