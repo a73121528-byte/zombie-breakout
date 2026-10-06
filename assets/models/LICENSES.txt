@@ -1,0 +1,53 @@
+Third-party 3D models in assets/models/
+=======================================
+All files below were downloaded 2026-10-06 as GLB from poly.pizza's static CDN
+(https://static.poly.pizza/<ResourceID>.glb), then processed with
+tools/optimize_glb.mjs (gltf-transform 4.5: duplicate-clip removal, "Armature|" prefix
+stripped from clip names, dedup/prune, resample, KHR_mesh_quantization).
+Geometry, rigs and animations are otherwise unchanged.
+
+female_hooded.glb
+  Source:  "Hooded Adventurer" by Quaternius
+           https://poly.pizza/m/y9KWOVG21R  (ResourceID 3186b8e9-afd5-4d48-846c-b2b530cd23e2)
+           Originally from Quaternius "Ultimate Animated Character Pack" (https://quaternius.com)
+  Author:  Quaternius (https://quaternius.com, https://www.patreon.com/quaternius)
+  License: CC0 1.0 Universal (public domain dedication)
+           https://creativecommons.org/publicdomain/zero/1.0/
+
+female_casual.glb
+  Source:  "Animated Woman" by Quaternius
+           https://poly.pizza/m/qJ2gsTUBHL  (ResourceID ba7a1955-ea51-4cb9-a561-188bdef0a6c7)
+           Originally from Quaternius "Ultimate Animated Character Pack"
+  Author:  Quaternius
+  License: CC0 1.0 Universal
+
+zombie_a.glb
+  Source:  "Zombie" by Quaternius
+           https://poly.pizza/m/VlXjG0N8Eg  (ResourceID c4002f69-6979-42e8-ad6e-2f4e14fc3a9d)
+           From Quaternius "Zombie Apocalypse Kit" (March 2024)
+           https://quaternius.com/packs/zombieapocalypsekit.html
+  Author:  Quaternius
+  License: CC0 1.0 Universal
+
+zombie_chubby.glb
+  Source:  "Zombie" (Zombie_Chubby) by Quaternius
+           https://poly.pizza/m/22K0aSZkHV  (ResourceID cf4368cf-b39e-4c9a-8a83-a9c637740eb8)
+           From Quaternius "Zombie Apocalypse Kit" (March 2024), uploaded to poly.pizza
+           the same day as zombie_a.
+  Author:  Quaternius
+  License: The pack is CC0 1.0 at the source (quaternius.com pack page and the Quaternius
+           Patreon/Sketchfab release say "Free to use in any project, even commercially! (CC0)").
+           NOTE: the poly.pizza listing for this file says "CC-BY 3.0". To be safe we
+           also give attribution: "Zombie by Quaternius (poly.pizza/m/22K0aSZkHV), CC-BY 3.0"
+           https://creativecommons.org/licenses/by/3.0/
+
+Credit line (optional for CC0, required for the CC-BY reading above):
+  3D characters by Quaternius (quaternius.com), CC0 / CC-BY 3.0.
+
+Code vendored alongside (lib/):
+  lib/GLTFLoader.js, lib/SkeletonUtils.js - three.js r160 examples/jsm, MIT License,
+  Copyright 2010-2023 three.js authors. https://github.com/mrdoob/three.js/blob/r160/LICENSE
+
+Not used / deliberately avoided:
+  three.js examples Xbot.glb, Michelle.glb, Soldier.glb: these characters/animations come
+  from Mixamo, which does not allow redistributing the raw assets. Not vendored.
