@@ -1405,7 +1405,7 @@ function animateRigged(dt) {
     R.pony[i].rotation.set(pony.ax[i], 0, pony.az[i]);
   }
   // invulnerability shimmer + star twinkle
-  const em = P.invuln > 0 && st === 'dodge' ? 0x1c0c2c : 0x050308; // subtle i-frame shimmer
+  const em = P.invuln > 0 && st === 'dodge' ? 0x140a20 : 0x050308; // subtle i-frame shimmer
   for (const m of R.mats.shimmer) m.emissive.setHex(em);
   R.star.material.emissiveIntensity = 0.8 + Math.sin(t * 3) * 0.3;
 }
