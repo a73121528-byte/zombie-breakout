@@ -672,9 +672,13 @@ function updateZombie(z, dt) {
       break;
     }
     case 'wander': {
+      if (z.dormant) { // boss waits at the checkpoint until the heroine arrives
+        if (d < 40 && !playerDead) { z.dormant = false; banner('融合巨獸<small>外環檢查哨 · 決戰</small>', 2.4); Sfx.roar(); shake = 0.4; }
+        else { faceTo = toP; moveSpeed = 0; break; }
+      }
       z.aggroT -= dt;
       const wx = z.wander.x - z.pos.x, wz = z.wander.z - z.pos.z;
-      if (Math.hypot(wx, wz) < 0.5 || z.t > 5) { z.t = 0; z.wander.set(clamp(z.pos.x + (Math.random() - .5) * 10, -BOUND, BOUND), 0, clamp(z.pos.z + (Math.random() - .5) * 10, -BOUND, BOUND)); }
+      if (Math.hypot(wx, wz) < 0.5 || z.t > 5) { z.t = 0; z.wander.set(z.pos.x + (Math.random() - .5) * 10, 0, z.pos.z + (Math.random() - .5) * 10); W.clampXZ(z.wander); }
       faceTo = Math.atan2(wx, wz); moveSpeed = cfg.walk;
       if (!playerDead && (d < cfg.detect || z.aggroT <= 0)) { z.state = 'chase'; z.t = 0; if (Math.random() < 0.6) Sfx.groan(cfg.pitch, 0.15); }
       break;
@@ -1158,7 +1162,7 @@ function updateCamera(dt) {
   if (G.boss && G.boss.alive && !P.lock) wantDist = 5.6;
   CAM.side = lerp(CAM.side, aiming ? 0.75 : 0.6, damp(4, dt));
   const fx = -Math.sin(CAM.yaw), fz = -Math.cos(CAM.yaw), rx = Math.cos(CAM.yaw), rz = -Math.sin(CAM.yaw);
-  const target = new THREE.Vector3(P.pos.x + rx * CAM.side, (P.state === 'dodge' ? 1.35 : 1.55), P.pos.z + rz * CAM.side);
+  const target = new THREE.Vector3(P.pos.x + rx * CAM.side, (P.state === 'dodge' ? 1.35 : 1.55) + P.gy, P.pos.z + rz * CAM.side);
   CAM.pivot.lerp(target, damp(14, dt));
   const cp = Math.cos(CAM.pitch), sp = Math.sin(CAM.pitch);
   const dir = new THREE.Vector3(-fx * cp, sp, -fz * cp);
@@ -1166,7 +1170,8 @@ function updateCamera(dt) {
   const dist = Math.max(0.9, hit - 0.25);
   CAM.curDist = dist < CAM.curDist ? dist : lerp(CAM.curDist, dist, damp(4, dt));
   camera.position.copy(CAM.pivot).addScaledVector(dir, CAM.curDist + INV.camKick * 0.12);
-  if (camera.position.y < 0.3) camera.position.y = 0.3;
+  { const gyc = Math.min(P.gy, W.groundY(camera.position.x, camera.position.z)); if (camera.position.y < gyc + 0.3) camera.position.y = gyc + 0.3; }
+  { const inr = W.interiorAt(P.pos.x, P.pos.z) || W.interiorAt(camera.position.x, camera.position.z); if (inr && camera.position.y > inr.ceil - 0.25) camera.position.y = inr.ceil - 0.25; }
   camera.lookAt(CAM.pivot.x + fx * 2, CAM.pivot.y - 0.15 + sp * 0.5 + INV.camKick * 0.06, CAM.pivot.z + fz * 2);
   if (shake > 0) {
     camera.position.x += (Math.random() - .5) * shake * 0.35; camera.position.y += (Math.random() - .5) * shake * 0.35;
@@ -1543,7 +1548,47 @@ function waveList(n) {
   for (let i = L.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0;[L[i], L[j]] = [L[j], L[i]]; }
   return L;
 }
+// district flavour: swap some generic walkers for the district's signature infected
+const DISTRICT_MIX = { hospital: [['walker', 'spitter', 0.3]], garage: [['walker', 'runner', 0.3]], mall: [['walker', 'runner', 0.25], ['walker', 'brute', 0.08]], subway: [['walker', 'runner', 0.35]], station: [['walker', 'runner', 0.4]], checkpoint: [['walker', 'armored', 0.4], ['runner', 'armored', 0.2]], downtown: [] };
+function districtType(type, x, z) { for (const [a, b, p] of DISTRICT_MIX[W.districtAt(x, z)] || []) if (type === a && Math.random() < p) return b; return type; }
+function findSpawnSpot(pad) {
+  const fx = -Math.sin(CAM.yaw), fz = -Math.cos(CAM.yaw);
+  const cands = [];
+  for (const [x, z] of W.spawnPoints) {
+    const dx = x - P.pos.x, dz = z - P.pos.z; if (Math.abs(dx) > 48 || Math.abs(dz) > 48) continue; const d = Math.hypot(dx, dz);
+    if (d < 13 || d > 48) continue;
+    const fd = W.flowDist(x, z); if (fd < 0) continue;
+    const inView = (dx * fx + dz * fz) / (d || 1) > 0.45;
+    cands.push({ x, z, score: (d < 17 ? 40 : 0) + (d > 34 ? (d - 34) * 3 : 0) + (fd > 55 ? (fd - 55) * 2 : 0) + (inView && d < 26 ? 25 : 0) + Math.random() * 30 });
+  }
+  cands.sort((a, b) => a.score - b.score);
+  for (const c of cands.slice(0, 40)) for (let tries = 0; tries < 4; tries++) {
+    const p = W.clampXZ({ x: c.x + (Math.random() - .5) * 3, z: c.z + (Math.random() - .5) * 3 });
+    if (!insideCollider(p.x, p.z, pad)) return [p.x, p.z];
+  }
+  return null;
+}
+// zombies left far behind (e.g. after taking the subway stairs) are moved back into play near the heroine
+function relocateStragglers() {
+  for (const z of zombies) {
+    if (!z.alive || z.isBoss || z.state === 'dead') continue;
+    const d = Math.hypot(z.pos.x - P.pos.x, z.pos.z - P.pos.z);
+    if (d < 70 && W.flowDist(z.pos.x, z.pos.z) >= 0) continue;
+    if (d < 40) continue;
+    const s = findSpawnSpot(0.8); if (!s) return;
+    z.pos.set(s[0], 0, s[1]); z.wander.copy(z.pos); z.state = 'chase'; z.t = 0; z.rig.root.position.x = s[0]; z.rig.root.position.z = s[1];
+  }
+}
 function spawnAtEdge(type) {
+  if (type === 'boss') { // the boss waits at the outer military checkpoint
+    const [bx, bz] = W.bossSpot; const zz = spawnZombie('boss', bx, bz); zz.dormant = true; zz.aggroT = 1e9; zz.wander.set(bx, 0, bz);
+    return zz;
+  }
+  const sp = findSpawnSpot(0.8);
+  if (sp) { const zz = spawnZombie(districtType(type, sp[0], sp[1]), sp[0], sp[1]); zz.aggroT = 0.3 + Math.random() * 1.2; return zz; }
+  return spawnAtEdgeOld(type);
+}
+function spawnAtEdgeOld(type) {
   // zombies emerge anywhere on the big map, out of sight, at a walkable distance, then home in via the flow field
   const fx = -Math.sin(CAM.yaw), fz = -Math.cos(CAM.yaw);
   const pad = type === 'boss' ? 2.2 : 0.8;
@@ -1558,7 +1603,7 @@ function spawnAtEdge(type) {
   cands.sort((a, b) => a.score - b.score);
   for (const c of cands.slice(0, 40)) {
     for (let tries = 0; tries < 4; tries++) {
-      const x = clamp(c.x + (Math.random() - .5) * 3, -BOUND + 1, BOUND - 1), z = clamp(c.z + (Math.random() - .5) * 3, -BOUND + 1, BOUND - 1);
+      const pp = W.clampXZ({ x: c.x + (Math.random() - .5) * 3, z: c.z + (Math.random() - .5) * 3 }), x = pp.x, z = pp.z;
       if (!insideCollider(x, z, pad)) { const zz = spawnZombie(type, x, z); zz.aggroT = 0.3 + Math.random() * 1.2; return zz; }
     }
   }
@@ -1570,14 +1615,17 @@ function startWave(n) {
   for (const k of WEAPON_ORDER) if (WEAPONS[k].unlockWave === n) setTimeout(() => G.mode === 'play' && unlockWeapon(k), 900);
   for (let i = 0; i < 3 && G.queue.length; i++) spawnAtEdge(G.queue.shift());
 }
+let stragT = 0;
 function updateWaves(dt) {
   G.phaseT += dt;
+  if ((stragT -= dt) <= 0) { stragT = 2; relocateStragglers(); }
+  if (G.phase === 'boss' && G.boss && G.boss.alive && G.boss.dormant && (G.bossHintT = (G.bossHintT || 0) - dt) <= 0) { G.bossHintT = 14; toast('首領在北方外環檢查哨', '循著地圖上的黃點前往決戰', '#ffd84a', '⚠'); }
   if (G.phase === 'fight') {
     G.spawnT -= dt;
     const alive = zombies.filter(z => z.alive).length;
     if (G.queue.length && G.spawnT <= 0 && alive < 14) { spawnAtEdge(G.queue.shift()); G.spawnT = 0.9 + Math.random() * 0.6; }
     if (!G.queue.length && alive === 0) {
-      if (G.wave >= MAX_WAVE) { G.phase = 'preboss'; G.phaseT = 0; banner('⚠ 首領來襲<small>融合巨獸 正在逼近…</small>', 3); Sfx.roar(); }
+      if (G.wave >= MAX_WAVE) { G.phase = 'preboss'; G.phaseT = 0; banner('⚠ 首領現身<small>融合巨獸 盤踞在北方外環檢查哨</small>', 3); Sfx.roar(); }
       else { G.phase = 'break'; G.phaseT = 0; banner(`第 ${G.wave} 波 清除<small>稍作喘息…</small>`, 2.2); P.hp = Math.min(P.maxHp, P.hp + 15); }
     }
   } else if (G.phase === 'break') {
@@ -1590,18 +1638,38 @@ function updateWaves(dt) {
   }
 }
 
+// ---------------------------------------------------------------- districts: name toasts, subway portals (fade to black)
+const fadeEl = document.createElement('div'); fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .25s;z-index:40'; document.body.appendChild(fadeEl);
+let curDistrict = null, curInterior = null, portalCd = 0;
+function updateDistrict(dt) {
+  portalCd -= dt;
+  const dk = W.districtAt(P.pos.x, P.pos.z), inr = W.interiorAt(P.pos.x, P.pos.z);
+  if (dk !== curDistrict) { const first = curDistrict === null; curDistrict = dk; const a = W.areas.find(a => a.k === dk); if (!first && a) toast(dk === 'garage' ? '立體停車場' : a.name, '進入區域', '#9ab0ff', '◈'); }
+  if ((inr && inr.k) !== (curInterior && curInterior.k)) { curInterior = inr; if (inr && inr.k !== 'station') toast(inr.name, '室內', '#c8b890', '⌂'); }
+  const pt = W.portalAt(P.pos.x, P.pos.z);
+  if (pt && portalCd <= 0 && P.state !== 'dead') {
+    portalCd = 1.5; fadeEl.style.opacity = '1';
+    setTimeout(() => {
+      P.pos.set(pt.to[0], 0, pt.to[1]); P.facing = pt.to[2]; P.gy = W.groundY(pt.to[0], pt.to[1]); CAM.yaw = pt.to[2] + Math.PI; CAM.pivot.set(P.pos.x, 1.55 + P.gy, P.pos.z); CAM.curDist = 1.5;
+      worldT = 0; fadeEl.style.opacity = '0'; toast(pt.to[1] > 240 ? '地鐵月台（地下）' : '地鐵站出入口', pt.to[1] > 240 ? '星港站 · 往外環' : '返回地面', '#7ac0ff', 'M');
+    }, 260);
+  }
+}
+
 // ---------------------------------------------------------------- HUD update
 const mm = $('minimap').getContext('2d');
 let mmFrame = 0;
 // static map layer rendered once (2 px per metre)
-const MAP_PX = 2, MAP_R = 96;
+const MAP_PX = 2, MAP_R = 272, MAP_CX = 0, MAP_CZ = 30;
 const mapLayer = document.createElement('canvas'); mapLayer.width = mapLayer.height = MAP_R * 2 * MAP_PX;
 {
   const c = mapLayer.getContext('2d');
   c.fillStyle = '#2a282e'; c.fillRect(0, 0, mapLayer.width, mapLayer.height);
-  c.setTransform(MAP_PX, 0, 0, MAP_PX, MAP_R * MAP_PX, MAP_R * MAP_PX);
-  const col = { blk: '#45424a', p: '#5a5348', b: '#77727c', r: '#5a4a40', c: '#2c2a30', v: '#8a3a30', g: '#6a3030', f: '#ff7a30' };
-  const order = ['blk', 'p', 'g', 'b', 'r', 'c', 'v', 'f'];
+  c.setTransform(MAP_PX, 0, 0, MAP_PX, (MAP_R - MAP_CX) * MAP_PX, (MAP_R - MAP_CZ) * MAP_PX);
+  c.fillStyle = '#0c0b0e'; c.fillRect(MAP_CX - MAP_R, MAP_CZ - MAP_R, MAP_R * 2, MAP_R * 2);
+  for (const a of W.areas) { c.fillStyle = a.k === 'station' ? '#1c2230' : '#2a282e'; c.fillRect(a.x0, a.z0, a.x1 - a.x0, a.z1 - a.z0); }
+  const col = { blk: '#45424a', p: '#5a5348', b: '#77727c', r: '#5a4a40', c: '#2c2a30', v: '#8a3a30', g: '#6a3030', f: '#ff7a30', i: '#8a7a5a', m: '#3a70c0', u: '#2a3448' };
+  const order = ['blk', 'p', 'g', 'u', 'b', 'i', 'm', 'r', 'c', 'v', 'f'];
   for (const k of order) for (const r of W.mapRects) {
     if (r.kind !== k) continue;
     c.save(); c.translate(r.x, r.z); c.rotate(-r.rot); c.fillStyle = col[k] || '#3e3b42';
@@ -1610,8 +1678,12 @@ const mapLayer = document.createElement('canvas'); mapLayer.width = mapLayer.hei
     c.restore();
   }
   c.fillStyle = 'rgba(150,140,110,.35)'; for (const r of W.roads) for (let t = -84; t < 84; t += 6) { c.fillRect(r - 0.2, t, 0.4, 3); c.fillRect(t, r - 0.2, 3, 0.4); }
-  c.strokeStyle = 'rgba(200,30,40,.85)'; c.lineWidth = 1; c.strokeRect(-BOUND, -BOUND, BOUND * 2, BOUND * 2);
-  c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(-MAP_R, -MAP_R, MAP_R * 2, MAP_R - BOUND); c.fillRect(-MAP_R, BOUND, MAP_R * 2, MAP_R - BOUND); c.fillRect(-MAP_R, -BOUND, MAP_R - BOUND, BOUND * 2); c.fillRect(BOUND, -BOUND, MAP_R - BOUND, BOUND * 2);
+  for (let t = -230; t < 214; t += 6) { if (Math.abs(t) > 84) { c.fillRect(-0.2, t, 0.4, 3); c.fillRect(t, -0.2, 3, 0.4); } }
+  c.strokeStyle = 'rgba(200,30,40,.7)'; c.lineWidth = 1; for (const a of W.areas) c.strokeRect(a.x0, a.z0, a.x1 - a.x0, a.z1 - a.z0);
+  c.strokeStyle = 'rgba(90,160,255,.8)'; c.setLineDash([3, 3]); c.beginPath(); c.moveTo(23, 148); c.lineTo(23, 256); c.lineTo(-30, 262); c.stroke(); c.setLineDash([]);
+  c.font = 'bold 9px "Noto Sans TC",sans-serif'; c.textAlign = 'center'; c.fillStyle = 'rgba(255,230,180,.9)';
+  for (const [t, x, z] of [['市中心', 0, -70], ['仁心醫院', 150, -58], ['停車場', 148, 58], ['星港百貨', -173, -60], ['地鐵站前', -30, 200], ['外環檢查哨', 0, -224], ['地下月台', 0, 310]]) { c.fillStyle = 'rgba(0,0,0,.6)'; c.fillText(t, x + 0.6, z + 0.6); c.fillStyle = 'rgba(255,230,180,.95)'; c.fillText(t, x, z); }
+  c.fillStyle = '#ffd84a'; c.beginPath(); c.arc(W.bossSpot[0], W.bossSpot[1], 3, 0, TAU); c.globalAlpha = 0.35; c.fill(); c.globalAlpha = 1;
 }
 function mapDots(c, scaleDot) {
   for (const z of zombies) {
@@ -1628,7 +1700,7 @@ function drawMinimap() {
   c.clearRect(0, 0, S, S);
   c.save();
   c.translate(R, R); c.rotate(CAM.yaw); c.scale(sc, sc); c.translate(-P.pos.x, -P.pos.z);
-  c.drawImage(mapLayer, -MAP_R, -MAP_R, MAP_R * 2, MAP_R * 2);
+  c.drawImage(mapLayer, MAP_CX - MAP_R, MAP_CZ - MAP_R, MAP_R * 2, MAP_R * 2);
   mapDots(c, 1);
   c.translate(P.pos.x, P.pos.z); c.rotate(-P.facing);
   c.fillStyle = '#fff'; c.beginPath(); c.moveTo(0, 2.6); c.lineTo(1.6, -1.6); c.lineTo(0, -0.6); c.lineTo(-1.6, -1.6); c.closePath(); c.fill();
@@ -1659,7 +1731,7 @@ function drawBigMap() {
   const S = bigMap.width, k = S / (MAP_R * 2);
   bigCtx.setTransform(1, 0, 0, 1, 0, 0); bigCtx.clearRect(0, 0, S, S);
   bigCtx.drawImage(mapLayer, 0, 0, S, S);
-  bigCtx.setTransform(k, 0, 0, k, S / 2, S / 2);
+  bigCtx.setTransform(k, 0, 0, k, S / 2 - MAP_CX * k, S / 2 - MAP_CZ * k);
   mapDots(bigCtx, 1.6);
   bigCtx.translate(P.pos.x, P.pos.z); bigCtx.rotate(-P.facing);
   bigCtx.fillStyle = '#fff'; bigCtx.strokeStyle = '#000'; bigCtx.lineWidth = 0.6; bigCtx.beginPath(); bigCtx.moveTo(0, 4.2); bigCtx.lineTo(2.6, -2.6); bigCtx.lineTo(0, -1); bigCtx.lineTo(-2.6, -2.6); bigCtx.closePath(); bigCtx.fill(); bigCtx.stroke();
@@ -1954,7 +2026,7 @@ function frame() {
     for (let i = zombies.length - 1; i >= 0; i--) if (zombies[i]) updateZombie(zombies[i], dt);
     separateZombies();
     updateProjectiles(dt);
-    if (G.mode === 'play') updateWaves(dt);
+    if (G.mode === 'play') { updateWaves(dt); updateDistrict(dt); }
     updateParts(dt);
     updateCamera(dt);
     updateFx(dt);

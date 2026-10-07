@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261006c';
+import { buildDistricts, AREAS, INTERIORS, STAIRS, PORTALS, HOLES, BOSS_SPOT } from './districts.js?v=20261006c';
 
 // seeded rng
 let seed = 1337;
@@ -319,15 +320,22 @@ export function buildWorld(scene) {
   // ---------------------------------------------------------------- ground
   const groundL = L({ map: asphalt, color: 0x9a96a0 });
   const groundP = new THREE.MeshPhongMaterial({ map: asphalt, color: 0x8e8a96, specularMap: wetTex, specular: 0x8a8aa0, shininess: 55, envMap: envCube, combine: THREE.MixOperation, reflectivity: 0.32, bumpMap: asphalt, bumpScale: 0.8 }); groundP.userData.bm = asphalt;
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(260, 260), groundL);
-  ground.rotation.x = -PI / 2; ground.receiveShadow = true; scene.add(ground);
+  // one asphalt sheet over all districts (600 m) with holes for stairwells; uv 0..1 over the sheet
+  const GX0 = -240, GZ0 = -250, GS = 560;
+  const gShape = new THREE.Shape([[GX0, -GZ0], [GX0 + GS, -GZ0], [GX0 + GS, -(GZ0 + GS)], [GX0, -(GZ0 + GS)]].map(p => new THREE.Vector2(p[0], p[1])));
+  for (const [x0, x1, z0, z1] of HOLES) gShape.holes.push(new THREE.Path([[x0, -z0], [x0, -z1], [x1, -z1], [x1, -z0]].map(p => new THREE.Vector2(p[0], p[1]))));
+  const gGeo = new THREE.ShapeGeometry(gShape); gGeo.rotateX(-PI / 2);
+  { const pa = gGeo.attributes.position, uv = gGeo.attributes.uv; for (let i = 0; i < pa.count; i++) uv.setXY(i, (pa.getX(i) - GX0) / GS, 1 - (pa.getZ(i) - GZ0) / GS); }
+  asphalt.repeat.set(GS / 8.67, GS / 8.67); wetTex.repeat.set(GS / 18.6, GS / 18.6);
+  const ground = new THREE.Mesh(gGeo, groundL);
+  ground.receiveShadow = true; scene.add(ground);
 
   // ---------------------------------------------------------------- blocks: sidewalks, curbs
   const blocks = [];
   for (const [x0, x1] of SPANS) for (const [z0, z1] of SPANS) blocks.push({ x0, x1, z0, z1, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 });
   const slab = (x0, x1, z0, z1, key) => { const w = x1 - x0, d = z1 - z0; add(tiledBox(w, 0.1, d, key === 'lot' ? 24 : key === 'paving' ? 2 : 1.5), key, (x0 + x1) / 2, 0.05, (z0 + z1) / 2); };
   for (const b of blocks) {
-    const x0 = b.x0 === -84 ? -110 : b.x0, x1 = b.x1 === 84 ? 110 : b.x1, z0 = b.z0 === -84 ? -110 : b.z0, z1 = b.z1 === 84 ? 110 : b.z1;
+    const x0 = b.x0, x1 = b.x1, z0 = b.z0, z1 = b.z1;
     b.special = (b.x0 === 9 && b.z0 === -47) ? 'plaza' : (b.x0 === -47 && b.z0 === 9) ? 'gas' : null;
     if (b.special === 'plaza') { slab(x0, 28, z0, z1, 'paving'); slab(28, x1, z0, z1, 'lot'); }
     else slab(x0, x1, z0, z1, 'sidewalk');
@@ -504,8 +512,6 @@ export function buildWorld(scene) {
     }
     cityBlock(b);
   }
-  // backdrop beyond the bounds at road ends (visual only)
-  for (const r of ROADS) for (const s of [-1, 1]) for (const [px, pz] of [[r, s * 104], [s * 104, r]]) { const h = rr(10, 26); add(tiledBox(14, h, 14, 6), 'facD', px, h / 2, pz); }
 
   // ---------------------------------------------------------------- props: helpers
   const jerseyGeo = (() => {
@@ -615,6 +621,7 @@ export function buildWorld(scene) {
   placeCar('van', -30, -2.5, PI - 0.15, { roll: PI / 2, random: false, broken: true });
   // road-end barricades at the map bounds
   for (const r of ROADS) for (const s of [-1, 1]) {
+    if (r === 0) { for (const [ax, az, ry] of [[0, s * 86, 0], [s * 86, 0, PI / 2]]) { jersey(ry ? ax : ax - 4.5, ry ? az - 4.5 : az, ry + 0.3); jersey(ry ? ax + s * 1.5 : ax + 4.8, ry ? az + 4.8 : az + s * 1.5, ry - 0.4); } continue; }
     for (const [ax, az, ry] of [[r, s * 82.5, 0], [s * 82.5, r, PI / 2]]) {
       for (let t = -5; t <= 5; t += 3.2) { const px = ry ? ax : ax + t, pz = ry ? az + t : az; jersey(px, pz, ry + rr(-.1, .1), false); }
       fence(ry ? ax + s * 1.2 : ax, ry ? az : az + s * 1.2, 12.5, ry);
@@ -693,6 +700,9 @@ export function buildWorld(scene) {
     add(box1, 'metal', bx + 0.4, 1.4, bz + 2.4, 0, 0, 0, 0.07, 2.8, 0.07); add(plateUV(new THREE.BoxGeometry(0.04, 0.4, 0.8), 14), 'signEm', bx + 0.4, 2.7, bz + 2.4);
     mapRects.push({ x: bx - 0.5, z: bz, w: 0.6, d: 3.8, rot: 0, kind: 'c' });
   }
+  // ---------------------------------------------------------------- v0.6 outer districts
+  const gRects = [], dLamps = [];
+  const DIST = buildDistricts({ THREE, add, addCollider, mapRects, tiledBox, box1, flat, plane, building, placeCar, sandbags, jersey, fence, sawhorse, addFire, rr, rnd, pick, mats, canvasTex, VC, VCD, gRects, lampSpots: dLamps, dumpster, barrelGeo: new THREE.CylinderGeometry(0.32, 0.3, 0.9, 10), sandbagGeo, PI });
   // ---------------------------------------------------------------- street lamps (instanced heads/cones), traffic lights
   const lamps = [];
   const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 5, 6);
@@ -703,6 +713,7 @@ export function buildWorld(scene) {
     lampSpots.push([r + s * 7.3, t, s, 'x'], [t, r + s * 7.3, s, 'z']);
   }
   for (const [px, pz] of [[11, -20], [44, -24], [44, -38]]) lampSpots.push([px, pz, 1, 'x']);
+  lampSpots.push(...dLamps);
   const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.35, 0.08, 0.2), new THREE.MeshBasicMaterial({ color: 0xffffff }), lampSpots.length);
   // volumetric-looking light cones: bright near the lamp, fading to the ground, with faint dust streaks
   const coneTex = canvasTex(64, 128, (g, w, h) => {
@@ -788,10 +799,11 @@ export function buildWorld(scene) {
   const paperGeo = new THREE.PlaneGeometry(0.28, 0.2), trashGeo = new THREE.SphereGeometry(0.35, 6, 4);
   const bloodGeo = new THREE.PlaneGeometry(2, 2); bloodGeo.rotateX(-PI / 2);
   const puddleGeo = new THREE.CircleGeometry(1, 16); puddleGeo.rotateX(-PI / 2);
-  for (let i = 0; i < 750; i++) {
-    const x = rr(-83, 83), z = rr(-83, 83);
+  const OUT_AREAS = AREAS.filter(a => a.k !== 'station');
+  for (let i = 0; i < 2100; i++) {
+    const A = i < 750 ? OUT_AREAS[0] : pick(OUT_AREAS), x = rr(A.x0 + 1, A.x1 - 1), z = rr(A.z0 + 1, A.z1 - 1);
     if (!free(x, z, 0.4) || Math.hypot(x, z - 4) < 3) continue;
-    const road = onRoad(x, z), t = rnd(), y0 = road ? 0 : 0.1;
+    const road = onRoad(x, z) && groundY(x, z) < 0.05, t = rnd(), y0 = groundY(x, z);
     if (t < 0.22) { const s = rr(0.15, 0.6); add(box1, 'rubble', x, y0 + s * 0.25, z, rr(0, 3), rr(-.5, .5), rr(-.5, .5), s, s * 0.5, s * 0.7); }
     else if (t < 0.32) add(trashGeo, 'trash', x, y0 + 0.18, z, rr(0, 3), 0, 0, rr(.8, 1.4), 0.6, 1);
     else if (t < 0.4) add(box1, 'wood', x, y0 + 0.04, z, rr(0, 3), 0, rr(-.1, .1), rr(0.12, 0.2), 0.05, rr(0.9, 1.8));
@@ -869,6 +881,7 @@ export function buildWorld(scene) {
   signOn(near(14, 14), 'x-', '旅館', '#20c0ff', '#7adfff', 5.8, 'buzz');
   signOn(near(-14, -62), 'x+', 'KTV', '#c040ff', '#e0a0ff', 6.4, 'buzz');
   signOn(near(62, 14), 'x-', '當舖', '#ffb020', '#ffd070', 4.8, 'stutter');
+  for (const n of DIST.neons) neonSign(...n);
   neonSign('加油站', '#ff3020', '#ff8070', -11 + 0.17, 7.2, 11 + 0.17, PI / 4, 2.4, 0.9, 'buzz');
 
   // ---------------------------------------------------------------- sky
@@ -938,13 +951,26 @@ export function buildWorld(scene) {
     smokes.visible = hi; pools.visible = hi; skyline.visible = hi; if (cones.material.map !== (hi ? coneTex : null)) { cones.material.map = hi ? coneTex : null; cones.material.needsUpdate = true; } rainOk = hi; for (const m of spills) m.userData.q = hi; rainN = key === 'high' ? RAIN_MAX : 700; setRain(rainOn);
   };
   // pavement height (sidewalk slabs are 0.1 m above the asphalt)
-  const groundY = (x, z) => {
-    for (const b of blocks) { const x0 = b.x0 === -84 ? -999 : b.x0, x1 = b.x1 === 84 ? 999 : b.x1, z0 = b.z0 === -84 ? -999 : b.z0, z1 = b.z1 === 84 ? 999 : b.z1; if (x > x0 && x < x1 && z > z0 && z < z1) return 0.1; }
+  function groundY(x, z) {
+    for (const st of STAIRS) if (x > st.x0 && x < st.x1 && z > st.z0 && z < st.z1) return st.y(x);
+    for (const b of blocks) if (x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1) return 0.1;
+    for (const r of gRects) if (x > r[0] && x < r[1] && z > r[2] && z < r[3]) return r[4];
     return 0;
-  };
+  }
 
+  // ---------------------------------------------------------------- districts: walkable areas, interiors, portals
+  function inArea(x, z, pad = 0) { for (const a of AREAS) if (x > a.x0 + pad && x < a.x1 - pad && z > a.z0 + pad && z < a.z1 - pad) return a; return null; }
+  function districtAt(x, z) { const a = inArea(x, z); if (!a) return 'downtown'; if (a.k === 'hospital' && z > 9) return 'garage'; return a.k; }
+  function interiorAt(x, z) { for (const r of INTERIORS) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return r; return null; }
+  function portalAt(x, z) { for (const p of PORTALS) if (x > p.x0 && x < p.x1 && z > p.z0 && z < p.z1) return p; return null; }
+  function clampXZ(p) {
+    if (inArea(p.x, p.z, 0.25)) return p;
+    let best = null, bd = 1e9;
+    for (const a of AREAS) { const x = Math.max(a.x0 + 0.3, Math.min(a.x1 - 0.3, p.x)), z = Math.max(a.z0 + 0.3, Math.min(a.z1 - 0.3, p.z)), d = (x - p.x) ** 2 + (z - p.z) ** 2; if (d < bd) { bd = d; best = [x, z]; } }
+    p.x = best[0]; p.z = best[1]; return p;
+  }
   // ---------------------------------------------------------------- collision queries (oriented boxes) with a spatial hash
-  const GC = 8, GO = 128, GN = Math.ceil(GO * 2 / GC);
+  const GC = 8, GO = 260, GN = Math.ceil(580 / GC);
   const grid = Array.from({ length: GN * GN }, () => []);
   for (const c of colliders) {
     for (let gx = Math.max(0, Math.floor((c.minX + GO) / GC)); gx <= Math.min(GN - 1, Math.floor((c.maxX + GO) / GC)); gx++)
@@ -970,7 +996,7 @@ export function buildWorld(scene) {
       else { const a = c.hw - Math.abs(lx), b = c.hd - Math.abs(lz); if (a < b) lx = Math.sign(lx || 1) * (c.hw + r); else lz = Math.sign(lz || 1) * (c.hd + r); }
       p.x = c.x + lx * c.c + lz * c.s; p.z = c.z - lx * c.s + lz * c.c;
     }
-    p.x = Math.max(-BOUND, Math.min(BOUND, p.x)); p.z = Math.max(-BOUND, Math.min(BOUND, p.z));
+    clampXZ(p);
   };
   const inside = (x, z, pad = 0) => {
     for (const c of query(x - pad, z - pad, x + pad, z + pad)) {
@@ -999,16 +1025,18 @@ export function buildWorld(scene) {
   };
 
   // ---------------------------------------------------------------- navigation flow field (1 m grid, BFS from the player)
-  const NO = 86, NN = NO * 2;
+  // 1 m grid over every district (i = x + NO, j = z + NOZ); the BFS only expands within FLOW_R cells of the player
+  const NO = 230, NOZ = 240, NN = 545, FLOW_R = 72;
   const blocked = new Uint8Array(NN * NN), dist = new Int16Array(NN * NN).fill(-1), queue = new Int32Array(NN * NN);
   for (let i = 0; i < NN; i++) for (let j = 0; j < NN; j++) {
-    const x = i - NO + 0.5, z = j - NO + 0.5;
-    blocked[i * NN + j] = (Math.abs(x) > BOUND - 0.3 || Math.abs(z) > BOUND - 0.3 || inside(x, z, 0.4)) ? 1 : 0;
+    const x = i - NO + 0.5, z = j - NOZ + 0.5;
+    blocked[i * NN + j] = (!inArea(x, z, 0.3) || inside(x, z, 0.4)) ? 1 : 0;
   }
-  const cellOf = (x, z) => { const i = Math.floor(x + NO), j = Math.floor(z + NO); return (i < 0 || j < 0 || i >= NN || j >= NN) ? -1 : i * NN + j; };
+  const cellOf = (x, z) => { const i = Math.floor(x + NO), j = Math.floor(z + NOZ); return (i < 0 || j < 0 || i >= NN || j >= NN) ? -1 : i * NN + j; };
+  let flowTouched = [];
   const NB = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
   const updateFlow = (px, pz) => {
-    dist.fill(-1);
+    for (const k of flowTouched) dist[k] = -1; flowTouched = [];
     let s = cellOf(px, pz); if (s < 0) return;
     if (blocked[s]) {
       const si = s / NN | 0, sj = s % NN; let found = -1;
@@ -1016,16 +1044,18 @@ export function buildWorld(scene) {
       if (found < 0) return; s = found;
     }
     let h = 0, t = 0; queue[t++] = s; dist[s] = 0;
+    const si = s / NN | 0, sj = s % NN;
     while (h < t) {
       const k = queue[h++], i = k / NN | 0, j = k % NN, dk = dist[k] + 1;
       for (let n = 0; n < 8; n++) {
         const a = i + NB[n][0], b = j + NB[n][1];
-        if (a < 0 || b < 0 || a >= NN || b >= NN) continue;
+        if (a < 0 || b < 0 || a >= NN || b >= NN || Math.abs(a - si) > FLOW_R || Math.abs(b - sj) > FLOW_R) continue;
         const q = a * NN + b; if (blocked[q] || dist[q] >= 0) continue;
         if (n >= 4 && (blocked[a * NN + j] || blocked[i * NN + b])) continue;
         dist[q] = dk; queue[t++] = q;
       }
     }
+    for (let q = 0; q < t; q++) flowTouched.push(queue[q]);
   };
   const flowDir = (x, z) => {
     const k = cellOf(x, z); if (k < 0) return null;
@@ -1038,16 +1068,16 @@ export function buildWorld(scene) {
       if (dist[q] < best) { best = dist[q]; bi = a; bj = b; }
     }
     if (bi < 0) return null;
-    return Math.atan2(bi - NO + 0.5 - x, bj - NO + 0.5 - z);
+    return Math.atan2(bi - NO + 0.5 - x, bj - NOZ + 0.5 - z);
   };
   const flowDist = (x, z) => { const k = cellOf(x, z); return k < 0 ? -1 : dist[k]; };
 
   // spawn points: open cells across the whole map (roads, sidewalks, alleys, plaza)
   const spawnPoints = [];
-  for (let x = -80; x <= 80; x += 4) for (let z = -80; z <= 80; z += 4) if (!inside(x, z, 1.0)) spawnPoints.push([x, z]);
+  for (const A of AREAS) for (let x = A.x0 + 3; x <= A.x1 - 3; x += 4) for (let z = A.z0 + 3; z <= A.z1 - 3; z += 4) if (!inside(x, z, 1.0) && !portalAt(x, z) && !STAIRS.some(st => x > st.x0 - 2 && x < st.x1 + 2 && z > st.z0 - 2 && z < st.z1 + 2)) spawnPoints.push([x, z, A.k]);
 
   scanGlow();
-  return { colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
+  return { areas: AREAS, interiors: INTERIORS, portals: PORTALS, bossSpot: BOSS_SPOT, districtAt, interiorAt, inArea, clampXZ, portalAt, beams: DIST.beams, colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
 }
 
 // blood splatter texture (white, tinted by material colour)
