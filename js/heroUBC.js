@@ -116,7 +116,7 @@ export function buildUBCHeroine(G, helpers) {
       zbLeather = mix(zbLeather, ${lin(ZC.boot)}, zbBoot);
       zbLeather = mix(zbLeather, ${lin(ZC.glove)}, zbGlove);
       zbLeather = mix(zbLeather, vec3(0.012), zbSole);
-      vec3 zbSkinC = diffuseColor.rgb * ${lin(ZC.skinTint)}; zbSkinC = mix(vec3(dot(zbSkinC, vec3(0.3, 0.59, 0.11))), zbSkinC, 0.78) * 1.32;
+      vec3 zbSkinC = diffuseColor.rgb * ${lin(ZC.skinTint)}; zbSkinC = mix(vec3(dot(zbSkinC, vec3(0.3, 0.59, 0.11))), zbSkinC, 0.72) * 1.42;
       diffuseColor.rgb = mix(zbSkinC, zbLeather, zbSuit);
       diffuseColor.rgb = mix(diffuseColor.rgb, ${lin(ZC.bronze)}, zbBand);`)
       .replace('#include <specularmap_fragment>', `#include <specularmap_fragment>
@@ -130,7 +130,7 @@ export function buildUBCHeroine(G, helpers) {
 
   // eyes / brows
   if (eyes) { const m = eyes.material; eyes.material = new THREE.MeshPhongMaterial({ map: m.map, shininess: 90, specular: 0x666666, emissive: 0x0a0610 }); eyes.material.name = 'ubc:eyes'; }
-  if (brows) { const m = brows.material; brows.material = new THREE.MeshPhongMaterial({ map: m.map, color: 0x4a2a6a, shininess: 10, specular: 0x111111, transparent: false }); brows.material.name = 'ubc:brows'; }
+  if (brows) { const m = brows.material; brows.material = new THREE.MeshPhongMaterial({ map: m.map, color: 0x8a6aa8, shininess: 10, specular: 0x111111, transparent: false }); brows.material.name = 'ubc:brows'; }
 
   // ---- coat shell: torso + sleeves inflated along the normals, cut analytically in the fragment shader
   const coatMat = new THREE.MeshPhongMaterial({ color: ZC.coat, shininess: 42, specular: 0x403a4a, emissive: 0x050308 });
@@ -334,8 +334,12 @@ export function buildUBCHeroine(G, helpers) {
     const nc = toChest({ x: 0, y: cy, z: (nz0 + nz1) / 2 }), rX = (nx + 0.02) * S, rZ = ((nz1 - nz0) / 2 + 0.02) * S;
     const ring = (r0, r1, y0, y1, a0, a1, col) => { const g = new THREE.LatheGeometry([new THREE.Vector2(r0, y0), new THREE.Vector2(r1, y1)], 18, a0, a1 - a0); return colored(g, col, [nc.x, nc.y, nc.z], [0, 0, 0], [1, 1, rZ / rX]); };
     // collar: higher at the back, open at the front (lathe angle 0 = +Z front)
-    L.push(ring(rX * 1.02, rX * 0.98, -0.01, 0.045, 0.55, Math.PI * 2 - 0.55, ZC.coat));
-    L.push(ring(rX * 0.985, rX * 0.965, 0.04, 0.05, 0.55, Math.PI * 2 - 0.55, ZC.bronzeHi));
+    // lowered hood: a soft cowl draped round the neck onto the shoulders (open at the throat), bronze-trimmed edge
+    const cowl = new THREE.LatheGeometry([[1.55, -0.085], [1.5, -0.06], [1.38, -0.025], [1.22, 0.01], [1.1, 0.04], [1.02, 0.055]].map(([r, y]) => new THREE.Vector2(rX * r, y)), 22, 0.62, Math.PI * 2 - 1.24);
+    L.push(colored(cowl, ZC.coat, [nc.x, nc.y, nc.z - 0.008], [0, 0, 0], [1, 1, rZ / rX * 1.05]));
+    L.push(ring(rX * 1.025, rX * 1.0, 0.05, 0.062, 0.62, Math.PI * 2 - 0.62, ZC.bronzeHi));
+    // fold line
+    L.push(ring(rX * 1.36, rX * 1.32, -0.03, -0.02, 0.7, Math.PI * 2 - 0.7, 0x120f15));
     chestM.add(mergedMesh(L, coatSide));
   }
 
@@ -400,8 +404,10 @@ export function buildUBCHeroine(G, helpers) {
   }
   // ---- holstered machete on the back (shown while a gun is out)
   const holster = new THREE.Group(); holster.name = 'holster'; chestM.add(holster);
-  holster.position.set(-0.06, -0.02, (cz0 - K.chest.z) * S - 0.05); holster.rotation.set(Math.PI / 2, 0, 0.55, 'ZYX');
-  const hm = buildMachete(); hm.scale.setScalar(0.95); holster.add(hm); holster.visible = false;
+  // flat against the back: handle behind the right shoulder blade, blade down toward the left hip
+  holster.position.set(-0.1, 0.1, (cz0 - K.chest.z) * S - 0.045);
+  { const Z = new THREE.Vector3(0.38, -1, 0).normalize(), X = new THREE.Vector3(0, 0, 1), Y = new THREE.Vector3().crossVectors(Z, X); holster.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z)); }
+  const hm = buildMachete(); hm.scale.setScalar(0.9); holster.add(hm); holster.visible = false;
   R.holster = holster;
   Object.assign(R.mats, { coat: coatMat, coatSide, star: starMat, face: bodyMat, shimmer, hair: hairMat, body: bodyMat });
 
