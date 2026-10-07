@@ -292,6 +292,7 @@ export function buildDistricts(A) {
   for (const [x, z, r] of [[-32, -170, 0], [-32, -184, 0], [34, -176, PI / 2], [34, -190, PI / 2]]) tent(x, z, 7, 5, r, 'olive', rnd() < 0.4);
   for (const [t, x, z, r] of [['pickup', -14, -170, 0.6], ['van', 18, -184, -1.2], ['pickup', 8, -168, 2.2], ['van', -40, -196, 0.1], ['suv', 26, -206, 1.0]]) placeCar(t, x, z, r, { color: 0x3a4028, random: false, broken: rnd() < 0.5, rust: 0.2, burnt: t === 'van' && x > 0 });
   placeCar('police', -6, -142, 2.6, { random: false, lights: 'flicker' });
+  roadLamps('x', 0, -224, -160); for (const z of [-170, -192, -214]) { lampSpots.push([-24, z, 1, 'x'], [24, z, -1, 'x']); }
   add(flat, 'helipad', 0, 0.12, -196, 0, 0, 0, 16, 1, 16);
   for (const [x, z] of [[-6, -186], [6, -206], [-38, -158], [40, -158]]) barrelFire(x, z);
   for (let i = 0; i < 4; i++) fence(-40 + i * 26, -228, 22, 0);
