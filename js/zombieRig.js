@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/GLTFLoader.js';
 import { clone as skClone } from 'three/addons/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
+import { creaseNormals } from './heroRig.js?v=20261007b';
 
 // ============================================================================
 // v0.5 step3: rigged zombies on Quaternius CC0 zombie_a.glb / zombie_chubby.glb.
@@ -55,6 +56,7 @@ function prepSource(gltf, key) {
   scene.traverse(o => {
     if (!o.isSkinnedMesh) return;
     const geo = o.geometry; if (geo.attributes.zinf) return;
+    creaseNormals(geo, 52); // v0.6: smooth shading on the low-poly zombie bodies
     const N = geo.attributes.position.count, uv = geo.attributes.uv, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, na = geo.attributes.normal;
     const zp = new Float32Array(N * 3), zn = new Float32Array(N * 3), zi = new Float32Array(N * 2);
     nm.getNormalMatrix(o.matrixWorld);

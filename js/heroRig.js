@@ -81,7 +81,7 @@ function mergedMesh(list, mat) { const g = mergeGeometries(list, false); list.fo
 // ---- smooth-shading helpers for the low-poly (flat shaded, split-vertex) Quaternius head
 const posKey = (p, i) => p.getX(i).toFixed(5) + ',' + p.getY(i).toFixed(5) + ',' + p.getZ(i).toFixed(5);
 // creased smooth normals on an indexed geometry, keeping every other attribute (skin weights) untouched
-function creaseNormals(geo, creaseDeg) {
+export function creaseNormals(geo, creaseDeg) {
   const p = geo.attributes.position, n = p.count, idx = geo.index ? geo.index.array : null, nf = (idx ? idx.length : n) / 3;
   const vi = k => idx ? idx[k] : k, cosC = Math.cos(creaseDeg * Math.PI / 180);
   const fn = new Float32Array(nf * 3), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -297,7 +297,7 @@ export function buildRiggedHeroine(gltf, helpers) {
   hairMat.customProgramCacheKey = () => 'zbhair1';
   const hw = (hb.max.x - hb.min.x) / 2, hcx = (hb.max.x + hb.min.x) / 2, backZ = hb.min.z, botY = hb.min.y, topY = hb.max.y, frontZ = hb.max.z;
   // tapered, slightly curved strand (tip at y = -1)
-  const strand = (curve = 0.25, tip = 0.18, seg = 6) => { const g = new THREE.CylinderGeometry(1, tip, 1, seg, 6); g.translate(0, -0.5, 0); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const y = p.getY(i); p.setZ(i, p.getZ(i) - curve * y * y); } g.computeVertexNormals(); return g; };
+  const strand = (curve = 0.25, tip = 0.18, seg = 8) => { const g = new THREE.CylinderGeometry(1, tip, 1, seg + 2, 10); g.translate(0, -0.5, 0); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const y = p.getY(i); p.setZ(i, p.getZ(i) - curve * y * y); } g.computeVertexNormals(); return g; };
   const SG = strand(0.25), SGs = strand(0.5), SGf = strand(-0.35), SGb = strand(-0.45, 0.14, 8), SGl = strand(-0.3, 0.2, 8);
   const HAIRC = [HC.hair, HC.hairHi, HC.hairDk, 0x6a3aa0];
   R.hairGroups = [];
@@ -372,7 +372,8 @@ export function buildRiggedHeroine(gltf, helpers) {
     }
     // soften the rest of the head + exposed skin: creased smooth normals (hair, hood, neck/hands)
     for (const o of meshes.head) if (o.isSkinnedMesh && o.visible && !/Skin/.test(o.material.name)) creaseNormals(o.geometry, /White/.test(o.material.name) ? 55 : 42);
-    for (const o of meshes.body) if (o.isSkinnedMesh && /Skin/.test(o.material.name)) creaseNormals(o.geometry, 60);
+    // v0.6: smooth shading over the whole outfit (coat, cape, collar, boots), creased so seams/hems stay crisp
+    for (const o of meshes.body) if (o.isSkinnedMesh) creaseNormals(o.geometry, /Skin/.test(o.material.name) ? 60 : 50);
   }
   // star hair ornament on the hood's left temple + glow
   const starMat = new THREE.MeshLambertMaterial({ color: 0xffd36a, emissive: 0x8a5a10 });
