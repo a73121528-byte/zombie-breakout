@@ -47,7 +47,7 @@ THREE.ShaderChunk.tonemapping_fragment = THREE.ShaderChunk.tonemapping_fragment 
 #if defined( TONE_MAPPING )
 { vec3 c = gl_FragColor.rgb; float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c = mix(vec3(l), c, 0.86);
-  c += vec3(-0.010, 0.006, 0.020) * (1.0 - smoothstep(0.0, 0.35, l)) + vec3(0.030, 0.012, -0.018) * smoothstep(0.35, 0.9, l);
+  c *= mix(vec3(0.95, 1.0, 1.08), vec3(1.07, 1.0, 0.9), smoothstep(0.08, 0.7, l));
   gl_FragColor.rgb = max(c, 0.0); }
 #endif
 `;
