@@ -928,8 +928,9 @@ export function buildWorld(scene) {
   const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
   const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0x9aa4c8, transparent: true, opacity: 0.32, depthWrite: false }));
   rain.frustumCulled = false; rain.visible = false; rain.userData.world = false; scene.add(rain);
-  let rainOn = true, rainOk = false, rainN = 0;
-  const setRain = (on) => { rainOn = on; rain.visible = rainOn && rainOk; groundP.reflectivity = rain.visible ? 0.45 : 0.32; groundP.shininess = rain.visible ? 70 : 55; };
+  let rainOn = true, rainOk = false, rainN = 0, indoor = false;
+  const setIndoor = (b) => { if (b !== indoor) { indoor = b; setRain(rainOn); } };
+  const setRain = (on) => { rainOn = on; rain.visible = rainOn && rainOk && !indoor; groundP.reflectivity = rain.visible ? 0.45 : 0.32; groundP.shininess = rain.visible ? 70 : 55; };
   const tick = (dt, cam) => {
     skyline.position.set(cam.position.x, 10, cam.position.z); smokes.position.set(cam.position.x, 0, cam.position.z);
     for (const sm of smokes.children) if (sm.userData.smoke) sm.material.map.offset.y -= dt * 0.02;
@@ -1077,7 +1078,7 @@ export function buildWorld(scene) {
   for (const A of AREAS) for (let x = A.x0 + 3; x <= A.x1 - 3; x += 4) for (let z = A.z0 + 3; z <= A.z1 - 3; z += 4) if (!inside(x, z, 1.0) && !portalAt(x, z) && !STAIRS.some(st => x > st.x0 - 2 && x < st.x1 + 2 && z > st.z0 - 2 && z < st.z1 + 2)) spawnPoints.push([x, z, A.k]);
 
   scanGlow();
-  return { areas: AREAS, interiors: INTERIORS, portals: PORTALS, bossSpot: BOSS_SPOT, districtAt, interiorAt, inArea, clampXZ, portalAt, beams: DIST.beams, colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
+  return { areas: AREAS, interiors: INTERIORS, portals: PORTALS, bossSpot: BOSS_SPOT, districtAt, interiorAt, setIndoor, inArea, clampXZ, portalAt, beams: DIST.beams, colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
 }
 
 // blood splatter texture (white, tinted by material colour)

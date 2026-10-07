@@ -667,13 +667,13 @@ function updateZombie(z, dt) {
       const k = Math.min(1, z.t / dur);
       z.rig.root.position.y = -(z.isBoss ? 4.5 : 1.8 * cfg.scale) * (1 - k);
       if (Math.random() < 0.3) burst(new THREE.Vector3(z.pos.x, 0.1, z.pos.z), 1, 'dust', 2, 0.15, 2);
-      if (k >= 1) { z.state = d < cfg.detect ? 'chase' : 'wander'; z.t = 0; if (z.isBoss) Sfx.roar(); }
+      if (k >= 1) { z.state = d < cfg.detect && !z.dormant ? 'chase' : 'wander'; z.t = 0; if (z.isBoss) Sfx.roar(); }
       faceTo = toP;
       break;
     }
     case 'wander': {
       if (z.dormant) { // boss waits at the checkpoint until the heroine arrives
-        if (d < 40 && !playerDead) { z.dormant = false; banner('融合巨獸<small>外環檢查哨 · 決戰</small>', 2.4); Sfx.roar(); shake = 0.4; }
+        if (d < 40 && !playerDead) { z.dormant = false; z.state = 'chase'; z.t = 0; banner('融合巨獸<small>外環檢查哨 · 決戰</small>', 2.4); Sfx.roar(); shake = 0.4; }
         else { faceTo = toP; moveSpeed = 0; break; }
       }
       z.aggroT -= dt;
@@ -1646,6 +1646,7 @@ function updateDistrict(dt) {
   const dk = W.districtAt(P.pos.x, P.pos.z), inr = W.interiorAt(P.pos.x, P.pos.z);
   if (dk !== curDistrict) { const first = curDistrict === null; curDistrict = dk; const a = W.areas.find(a => a.k === dk); if (!first && a) toast(dk === 'garage' ? '立體停車場' : a.name, '進入區域', '#9ab0ff', '◈'); }
   if ((inr && inr.k) !== (curInterior && curInterior.k)) { curInterior = inr; if (inr && inr.k !== 'station') toast(inr.name, '室內', '#c8b890', '⌂'); }
+  W.setIndoor(!!(inr || W.interiorAt(camera.position.x, camera.position.z)));
   const pt = W.portalAt(P.pos.x, P.pos.z);
   if (pt && portalCd <= 0 && P.state !== 'dead') {
     portalCd = 1.5; fadeEl.style.opacity = '1';
