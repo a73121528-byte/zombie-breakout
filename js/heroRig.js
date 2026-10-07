@@ -19,7 +19,7 @@ export function loadHeroGLB(url, onProgress) {
   });
 }
 
-const HC = {
+export const HC = {
   coat: 0x1d1a22, coatHi: 0x2b2731, inner: 0x34303c, pants: 0x221f28, boot: 0x1d1922, bronze: 0x9a6232, bronzeHi: 0xc08040,
   skin: 0xe8d4c8, eye: 0x1a1024, hair: 0x5a2f8c, hairHi: 0x8452c4, hairDk: 0x3a1c60, strap: 0x2c1c14, metal: 0x2e2a34,
 };
@@ -45,7 +45,7 @@ function partOf(o) {
 }
 
 // a Group under `bone` whose bind-pose world frame = bone origin, model axes, metric scale
-function boneMount(bone, modelRoot, name) {
+export function boneMount(bone, modelRoot, name) {
   const g = new THREE.Group(); g.name = name || ''; bone.add(g);
   const bp = new THREE.Vector3(); bone.getWorldPosition(bp);
   const rq = new THREE.Quaternion(); modelRoot.parent ? modelRoot.parent.getWorldQuaternion(rq) : rq.identity();
@@ -65,7 +65,7 @@ function boxIn(objs, mount) {
 }
 
 // small vertex-colored parts kit (capsules / sheets) merged into one mesh per parent
-function colored(geo, color, p, r, s) {
+export function colored(geo, color, p, r, s) {
   const g = geo.index ? geo.toNonIndexed() : geo.clone();
   const m = new THREE.Matrix4().compose(new THREE.Vector3(...p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...(r || [0, 0, 0]))), new THREE.Vector3(...(s || [1, 1, 1])));
   g.applyMatrix4(m);
@@ -75,7 +75,7 @@ function colored(geo, color, p, r, s) {
   for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(k)) g.deleteAttribute(k);
   return g;
 }
-function mergedMesh(list, mat) { const g = mergeGeometries(list, false); list.forEach(x => x.dispose()); g.computeBoundingSphere(); const m = new THREE.Mesh(g, mat); m.castShadow = true; return m; }
+export function mergedMesh(list, mat) { const g = mergeGeometries(list, false); list.forEach(x => x.dispose()); g.computeBoundingSphere(); const m = new THREE.Mesh(g, mat); m.castShadow = true; return m; }
 
 
 // ---- smooth-shading helpers for the low-poly (flat shaded, split-vertex) Quaternius head

@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261007b';
-import { buildWorld } from './world.js?v=20261007b';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261007b';
-import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261007b';
-import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261007b';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261007b';
+import { Sfx } from './audio.js?v=20261008a';
+import { buildWorld } from './world.js?v=20261008a';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261008a';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261008a';
+import { loadUBC, buildUBCHeroine } from './heroUBC.js?v=20261008a';
+import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261008a';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261008a';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -1431,7 +1432,7 @@ function animateRigged(dt) {
   else if (st === 'dodge') { if (entered) R.play('Roll', { once: true, fade: 0.05, ts: 1.55 / 0.5, start: 0.08, restart: true }); }
   else if (st === 'attack') {
     if (entered) {
-      const A = ATK[P.combo], start = P.combo === 2 ? 0 : 0.12, ts = (SLASH_HIT - start) / A.hit;
+      const A = ATK[P.combo], start = P.combo === 2 ? 0 : 0.12, ts = ((R.slashHit ?? SLASH_HIT) - start) / A.hit;
       R.play('Sword_Slash', { once: true, fade: P.combo ? 0.05 : 0.08, ts, start, restart: true });
     }
   } else if (st === 'skill') { if (entered) R.play('Sword_Slash', { once: true, fade: 0.06, ts: 1.15 / 0.72, start: 0.1, restart: true }); }
@@ -1524,7 +1525,7 @@ function animateRigged(dt) {
   const ps = R.ps || (R.ps = { ax: R.pony.map(() => 0), vx: R.pony.map(() => 0), az: R.pony.map(() => 0), vz: R.pony.map(() => 0) });
   for (let i = 0; i < R.pony.length; i++) {
     // softer springs further down the chain = smoother, lagging sway
-    const tx = (i === 0 ? 0.2 : 0.07) + run * (0.45 - i * 0.07) + (st === 'skill' ? 0.7 / (i + 1) : 0) + (st === 'dodge' ? 0.15 : 0) + Math.sin(t * 2.1 - i * 0.8) * 0.025;
+    const tx = (R.ponyRest ? R.ponyRest[i] ?? 0.04 : i === 0 ? 0.2 : 0.07) + run * (R.ponyRest ? 0.32 - i * 0.1 : 0.45 - i * 0.07) + (st === 'skill' ? 0.7 / (i + 1) : 0) + (st === 'dodge' ? 0.15 : 0) + Math.sin(t * 2.1 - i * 0.8) * 0.025;
     const tz = clamp(-turn * 0.022 * (i + 1), -0.7, 0.7) + Math.sin(t * 1.6 - i * 0.9) * 0.02;
     const kx = 62 - i * 9, cx = 8.5 - i * 0.8;
     ps.vx[i] += ((tx - ps.ax[i]) * kx - ps.vx[i] * cx) * dt - clamp(vy, -6, 6) * 0.12 * (i + 1) * dt * 10;
@@ -2072,7 +2073,8 @@ function swapHero(R) {
   for (const k in guns) {
     const g = guns[k].g; R.gunMount.add(g);
     // Quaternius hands are big: scale the guns up and push them forward so the slide/barrel clears the fingers
-    if (R.rigged) { g.scale.setScalar(k === 'pistol' ? 1.45 : 1.15); g.position.set(0, -0.012, k === 'pistol' ? 0.06 : 0.035); }
+    if (R.gunScale) { g.scale.setScalar(k === 'pistol' ? R.gunScale.pistol : R.gunScale.other); g.position.set(0, -0.01, k === 'pistol' ? 0.045 : 0.03); }
+    else if (R.rigged) { g.scale.setScalar(k === 'pistol' ? 1.45 : 1.15); g.position.set(0, -0.012, k === 'pistol' ? 0.06 : 0.035); }
   }
   hero = R; scene.add(R.root);
   R.root.position.set(P.pos.x, P.gy, P.pos.z); R.root.rotation.y = P.facing;
@@ -2102,14 +2104,26 @@ function setLoad(k, label) {
   let hK = 0, zK = FORCE_PROC_Z ? 1 : 0;
   const prog = () => { curK = 0.1 + (hK * 0.55 + zK * 0.45) * 0.8; setLoad(Math.max(fake, curK)); };
   initZombieRig({ glowSprite });
-  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261007b', k => { zK = k; prog(); })
+  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261008a', k => { zK = k; prog(); })
     .catch(e => { console.warn('rigged zombies unavailable, procedural fallback:', e && e.message ? e.message : e); return null; });
   try {
     if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
-    const gltf = await loadHeroGLB(HERO_GLB + '?v=20261007b', k => { hK = k; prog(); });
-    setLoad(0.9, '組裝星璃…');
-    swapHero(buildRiggedHeroine(gltf, { buildMachete, starGeo, glowSprite }));
-    window.__heroMode = 'rigged';
+    const helpers = { buildMachete, starGeo, glowSprite };
+    let R = null;
+    // v0.6b: Universal Base Characters heroine (default); ?hero=old keeps the v0.5 Quaternius rig
+    if (!/[?&]hero=old/.test(location.search)) {
+      try {
+        const G3 = await loadUBC('20261008a', k => { hK = k; prog(); });
+        setLoad(0.9, '組裝星璃…');
+        R = buildUBCHeroine(G3, helpers); window.__heroMode = 'ubc';
+      } catch (e) { console.warn('UBC heroine unavailable, falling back to the v0.5 rig:', e && e.message ? e.message : e); R = null; }
+    }
+    if (!R) {
+      const gltf = await loadHeroGLB(HERO_GLB + '?v=20261008a', k => { hK = k; prog(); });
+      setLoad(0.9, '組裝星璃…');
+      R = buildRiggedHeroine(gltf, helpers); window.__heroMode = 'rigged';
+    }
+    swapHero(R);
   } catch (e) {
     console.warn('rigged heroine unavailable, using procedural fallback:', e && e.message ? e.message : e);
     window.__heroMode = 'procedural';
