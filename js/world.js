@@ -757,8 +757,8 @@ export function buildWorld(scene) {
   for (const b of DIST.beams) { const m = new THREE.Mesh(beamGeo, beamMat); m.position.set(b.x, b.y, b.z); m.userData.b = b; m.userData.ph = rnd() * 6; m.renderOrder = 2; scene.add(m); beamObjs.push(m);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowT, color: 0xfff0d0, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); sp.position.set(b.x, b.y, b.z); sp.scale.setScalar(2.2); scene.add(sp); }
   const shaftTex = canvasTex(64, 128, (g, w, h) => { const img = g.createImageData(w, h); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const u = Math.abs(x / (w - 1) - 0.5) * 2, v = y / (h - 1), a = Math.pow(1 - u, 2.2) * (1 - v * 0.75) * Math.min(1, v * 6) * (0.75 + 0.25 * Math.sin(x * 0.9 + y * 0.05)), k = (y * w + x) * 4; img.data[k] = img.data[k + 1] = img.data[k + 2] = 255 * a; img.data[k + 3] = 255; } g.putImageData(img, 0, 0); }, false);
-  const shaftMat = new THREE.MeshBasicMaterial({ map: shaftTex, color: 0x30343a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  for (const [x, y, z, ry, w, h, tilt] of [[144, 2.4, -16, 0, 6, 5, 0.35], [-173, 2.8, -18, 0, 9, 5.6, 0.3], [148, 1.6, 22, 0, 5, 3.3, 0.25], [24, 1.8, 148, PI / 2, 6, 3.6, 0.2]]) {
+  const shaftMat = new THREE.MeshBasicMaterial({ map: shaftTex, color: 0x14171c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  for (const [x, y, z, ry, w, h, tilt] of [[144, 2.4, -16, 0, 6, 5, 0.35], [-173, 2.8, -18, 0, 9, 5.6, 0.3], [24, 1.8, 148, PI / 2, 6, 3.6, 0.2]]) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), shaftMat); m.position.set(x, y, z); m.rotation.set(tilt, ry, 0); m.renderOrder = 2; scene.add(m);
     const m2 = m.clone(); m2.rotation.set(tilt, ry + PI / 2, 0); scene.add(m2);
   }
