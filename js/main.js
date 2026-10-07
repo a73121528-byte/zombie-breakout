@@ -41,7 +41,18 @@ function detectQuality(gl) {
 
 // ---------------------------------------------------------------- renderer
 const canvas = $('c');
+// v0.6 grading: ACES filmic + split-tone (cold teal shadows, warm sodium highlights), slight desaturation, applied
+// inside every material's tone-mapping chunk so it costs no extra pass on phones
+THREE.ShaderChunk.tonemapping_fragment = THREE.ShaderChunk.tonemapping_fragment + `
+#if defined( TONE_MAPPING )
+{ vec3 c = gl_FragColor.rgb; float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, 0.86);
+  c += vec3(-0.010, 0.006, 0.020) * (1.0 - smoothstep(0.0, 0.35, l)) + vec3(0.030, 0.012, -0.018) * smoothstep(0.35, 0.9, l);
+  gl_FragColor.rgb = max(c, 0.0); }
+#endif
+`;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.55;
 const AUTO_Q = detectQuality(renderer.getContext());
 let Q = QUALITY[qSetting === 'auto' ? AUTO_Q : qSetting] || QUALITY.mid;
 let pixelRatio = Math.min(window.devicePixelRatio || 1, Q.prCap);
@@ -55,9 +66,10 @@ scene.background = new THREE.Color(FOG);
 scene.fog = new THREE.FogExp2(FOG, 0.046);
 const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 80);
 
-scene.add(new THREE.HemisphereLight(0x6e6890, 0x2c2226, 1.8));
+const hemi = new THREE.HemisphereLight(0x6e6890, 0x2c2226, 1.8); scene.add(hemi);
 const moon = new THREE.DirectionalLight(0xa49ad0, 1.5); moon.position.set(-20, 30, 10); scene.add(moon); scene.add(moon.target);
-moon.shadow.camera.left = -13; moon.shadow.camera.right = 13; moon.shadow.camera.top = 13; moon.shadow.camera.bottom = -13;
+const setShadowBox = r => { moon.shadow.camera.left = -r; moon.shadow.camera.right = r; moon.shadow.camera.top = r; moon.shadow.camera.bottom = -r; moon.shadow.camera.updateProjectionMatrix(); };
+setShadowBox(13);
 moon.shadow.camera.near = 1; moon.shadow.camera.far = 70; moon.shadow.bias = -0.0012; moon.shadow.normalBias = 0.03;
 const rimLight = new THREE.DirectionalLight(0x7a88d8, 1.3); scene.add(rimLight); scene.add(rimLight.target); // cool moonlight rim from behind the subjects
 const W = buildWorld(scene);
@@ -1640,7 +1652,7 @@ function updateWaves(dt) {
 
 // ---------------------------------------------------------------- districts: name toasts, subway portals (fade to black)
 const fadeEl = document.createElement('div'); fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .25s;z-index:40'; document.body.appendChild(fadeEl);
-let curDistrict = null, curInterior = null, portalCd = 0;
+let curDistrict = null, curInterior = null, portalCd = 0, indoorK = 0;
 function updateDistrict(dt) {
   portalCd -= dt;
   const dk = W.districtAt(P.pos.x, P.pos.z), inr = W.interiorAt(P.pos.x, P.pos.z);
@@ -1843,7 +1855,9 @@ function updateFx(dt) {
   { const dx = P.pos.x - camera.position.x, dz = P.pos.z - camera.position.z, L = Math.hypot(dx, dz) || 1; rimLight.target.position.set(P.pos.x, 0.8, P.pos.z); rimLight.position.set(P.pos.x + dx / L * 10, 7, P.pos.z + dz / L * 10); }
   fillLight.position.set(camera.position.x, camera.position.y + 1.2, camera.position.z);
   // shadow camera follows the heroine
-  if (Q.shadow) { moon.target.position.set(P.pos.x, 0, P.pos.z); moon.position.set(P.pos.x - 20, 30, P.pos.z + 10); }
+  if (Q.shadow) { const tx = (moon.shadow.camera.right * 2) / Q.shadow, sx = Math.round(P.pos.x / tx) * tx, sz = Math.round(P.pos.z / tx) * tx; moon.target.position.set(sx, 0, sz); moon.position.set(sx - 20, 30, sz + 10); }
+  // indoors: no moonlight, dimmer sky bounce, warmer fill (sealed interiors read as enclosed spaces)
+  { const k = indoorK += ((curInterior ? 1 : 0) - indoorK) * Math.min(1, dt * 3); moon.intensity = 1.5 * (1 - k * 0.85); hemi.intensity = 1.8 * (1 - k * 0.45); hemi.color.setRGB(0.43 - k * 0.1, 0.41 - k * 0.08, 0.56 - k * 0.12); }
   // embers drift around the camera
   if (Q.embers) {
     const cx = P.pos.x, cz = P.pos.z;
@@ -1872,6 +1886,7 @@ function applyQuality(setting) {
   const shadowOn = Q.shadow > 0;
   renderer.shadowMap.enabled = shadowOn; renderer.shadowMap.type = Q.shadow >= 1024 ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
   moon.castShadow = shadowOn;
+  setShadowBox(Q.shadow >= 1024 ? 17 : 13);
   if (shadowOn) { moon.shadow.mapSize.set(Q.shadow, Q.shadow); if (moon.shadow.map) { moon.shadow.map.dispose(); moon.shadow.map = null; } }
   hero.root.traverse(o => { if (o.isMesh) o.castShadow = shadowOn && o.userData.cast !== false; });
   const det = key !== 'low', cb = key === 'high'; setCharDetail(cb); applyCharBump([hero.mats.coat, hero.mats.coatSide], cb);

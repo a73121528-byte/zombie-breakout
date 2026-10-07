@@ -55,6 +55,7 @@ export function buildDistricts(A) {
   mats.sgPark = textMat('P 停車場 B 區', '#fff', '#1a3a8a'); mats.sgMil = textMat('軍事管制區 禁止進入', '#ffd020', '#2a2a1a', 256, 64, 26);
   mats.sgMall = textMat('B1 美食街 ↓  2F 女裝 ↑', '#fff', '#3a2a1a', 256, 64, 24);
   for (const k of ['floorTile', 'floorGran', 'metroWall', 'ceilPanel']) mats[k].userData.bump = [mats[k].map, 0.5];
+  if (A.aoMat) for (const k of ['metroWall', 'curtain', 'floorGran']) A.aoMat(mats[k]);
 
   const R = (x0, x1, z0, z1) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 });
   const slab = (x0, x1, z0, z1, key, y = 0.1, T0 = 1.5) => { const r = R(x0, x1, z0, z1); add(tiledBox(r.w, 0.1, r.d, T0), key, r.x, y - 0.05, r.z); gRects.push([x0, x1, z0, z1, y]); };

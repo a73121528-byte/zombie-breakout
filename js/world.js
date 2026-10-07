@@ -314,6 +314,12 @@ export function buildWorld(scene) {
   mats.vc2 = L({ vertexColors: true, side: THREE.DoubleSide }); mats.vc2D = mats.vc2;
   mats.vcB = new THREE.MeshBasicMaterial({ vertexColors: true });
 
+  const aoMat = (m, k = 0.5) => { m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vAoY; varying float vAoN;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvAoY = position.y; vAoN = abs(normal.y);');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vAoY; varying float vAoN;').replace('#include <color_fragment>', `#include <color_fragment>\n diffuseColor.rgb *= mix(1.0, mix(${(1 - k).toFixed(2)}, 1.0, smoothstep(0.0, 1.5, vAoY)), step(vAoN, 0.5));`);
+  }; m.customProgramCacheKey = () => 'ao' + k; };
+  for (const k of ['facA', 'facB', 'facC', 'facD', 'facE', 'shop0', 'shop1', 'shop2', 'concrete', 'vc', 'metroWall', 'curtain', 'floorGran']) if (mats[k]) aoMat(mats[k], k === 'vc' ? 0.35 : 0.5);
+  mats.puddle.reflectivity = 0.72; mats.puddle.shininess = 160;
   const box1 = new THREE.BoxGeometry(1, 1, 1);
   const plane = new THREE.PlaneGeometry(1, 1); const flat = plane.clone(); flat.rotateX(-PI / 2);
 
@@ -702,7 +708,7 @@ export function buildWorld(scene) {
   }
   // ---------------------------------------------------------------- v0.6 outer districts
   const gRects = [], dLamps = [];
-  const DIST = buildDistricts({ THREE, add, addCollider, mapRects, tiledBox, box1, flat, plane, building, placeCar, sandbags, jersey, fence, sawhorse, addFire, rr, rnd, pick, mats, canvasTex, VC, VCD, gRects, lampSpots: dLamps, dumpster, barrelGeo: new THREE.CylinderGeometry(0.32, 0.3, 0.9, 10), sandbagGeo, PI });
+  const DIST = buildDistricts({ THREE, add, addCollider, mapRects, tiledBox, box1, flat, plane, building, placeCar, sandbags, jersey, fence, sawhorse, addFire, rr, rnd, pick, mats, canvasTex, VC, VCD, gRects, lampSpots: dLamps, aoMat, dumpster, barrelGeo: new THREE.CylinderGeometry(0.32, 0.3, 0.9, 10), sandbagGeo, PI });
   // ---------------------------------------------------------------- street lamps (instanced heads/cones), traffic lights
   const lamps = [];
   const poleGeo = new THREE.CylinderGeometry(0.07, 0.09, 5, 6);
@@ -744,6 +750,25 @@ export function buildWorld(scene) {
   }
   heads.count = cones.count = pools.count = li;
   for (let i = 0; i < li; i++) { heads.setColorAt(i, _c.setRGB(1, 0.85, 0.62, THREE.SRGBColorSpace)); cones.setColorAt(i, _c.setRGB(0.05, 0.035, 0.022, THREE.SRGBColorSpace)); pools.setColorAt(i, _c.setRGB(0.3, 0.2, 0.1, THREE.SRGBColorSpace)); }
+  // ---------------------------------------------------------------- v0.6 god-ray cones: sweeping searchlights on the checkpoint towers + light shafts
+  const beamObjs = [];
+  const beamMat = new THREE.MeshBasicMaterial({ map: coneTex, color: 0x3a3a30, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  const beamGeo = new THREE.ConeGeometry(3.2, 26, 18, 1, true); beamGeo.translate(0, -13, 0);
+  for (const b of DIST.beams) { const m = new THREE.Mesh(beamGeo, beamMat); m.position.set(b.x, b.y, b.z); m.userData.b = b; m.userData.ph = rnd() * 6; m.renderOrder = 2; scene.add(m); beamObjs.push(m);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowT, color: 0xfff0d0, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); sp.position.set(b.x, b.y, b.z); sp.scale.setScalar(2.2); scene.add(sp); }
+  const shaftMat = new THREE.MeshBasicMaterial({ map: coneTex, color: 0x26303a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  for (const [x, y, z, ry, w, h, tilt] of [[144, 2.4, -16, 0, 6, 5, 0.35], [-173, 2.8, -18, 0, 9, 5.6, 0.3], [0, 2.0, 268, 0, 4, 4.2, 0.0], [12, 2.0, 280, 0, 4, 4.2, 0.0], [148, 1.6, 22, 0, 5, 3.3, 0.25], [24, 1.8, 148, PI / 2, 6, 3.6, 0.2]]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), shaftMat); m.position.set(x, y, z); m.rotation.set(tilt, ry, 0); m.renderOrder = 2; scene.add(m);
+    const m2 = m.clone(); m2.rotation.set(tilt, ry + PI / 2, 0); scene.add(m2);
+  }
+  // low ground mist (height fog): two scrolling sheets that follow the camera, fade with distance
+  const mistTex = canvasTex(256, 256, (g, w, h) => { g.clearRect(0, 0, w, h); for (let i = 0; i < 90; i++) { const x = Math.random() * w, y = Math.random() * h, r = 20 + Math.random() * 50; for (const [ox, oy] of [[0, 0], [w, 0], [-w, 0], [0, h], [0, -h]]) { const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r); gr.addColorStop(0, 'rgba(255,255,255,.22)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(x + ox - r, y + oy - r, r * 2, r * 2); } } }, false);
+  mistTex.repeat.set(3, 3);
+  const mistMat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, uniforms: { map: { value: mistTex }, off: { value: new THREE.Vector2() }, col: { value: new THREE.Color(0x4a4658) }, op: { value: 0.32 } },
+    vertexShader: 'varying vec2 vUv; varying float vD; uniform vec2 off; void main(){ vec4 wp = modelMatrix*vec4(position,1.); vUv = wp.xz/22. + off; vec4 mv = viewMatrix*wp; vD = -mv.z; gl_Position = projectionMatrix*mv; }',
+    fragmentShader: 'uniform sampler2D map; uniform vec3 col; uniform float op; varying vec2 vUv; varying float vD; void main(){ float a = texture2D(map, vUv).a * op * smoothstep(1.5, 6., vD) * (1. - smoothstep(26., 48., vD)); gl_FragColor = vec4(col, a); }' });
+  const mists = [0.35, 0.9].map((y, i) => { const g = new THREE.PlaneGeometry(110, 110); g.rotateX(-PI / 2); const m = new THREE.Mesh(g, i ? mistMat.clone() : mistMat); m.position.y = y; m.renderOrder = 3; m.frustumCulled = false; m.userData.world = false; scene.add(m); return m; });
+  mists[1].material.uniforms = { ...mistMat.uniforms, off: { value: new THREE.Vector2() }, op: { value: 0.2 } };
   heads.frustumCulled = cones.frustumCulled = pools.frustumCulled = false; cones.renderOrder = 2; pools.renderOrder = 1; scene.add(heads, cones, pools);
   const setLamp = (l, v) => {
     if (l.mode === 'dead') v = 0.03;
@@ -928,10 +953,13 @@ export function buildWorld(scene) {
   const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
   const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0x9aa4c8, transparent: true, opacity: 0.32, depthWrite: false }));
   rain.frustumCulled = false; rain.visible = false; rain.userData.world = false; scene.add(rain);
-  let rainOn = true, rainOk = false, rainN = 0, indoor = false;
+  let rainOn = true, rainOk = false, rainN = 0, indoor = false, tickT = 0, mistOn = true;
   const setIndoor = (b) => { if (b !== indoor) { indoor = b; setRain(rainOn); } };
   const setRain = (on) => { rainOn = on; rain.visible = rainOn && rainOk && !indoor; groundP.reflectivity = rain.visible ? 0.45 : 0.32; groundP.shininess = rain.visible ? 70 : 55; };
   const tick = (dt, cam) => {
+    tickT += dt;
+    for (const m of beamObjs) { const b = m.userData.b, a = Math.sin(tickT * 0.35 + m.userData.ph) * 0.9; m.rotation.set(0.95 * Math.cos(a), 0, 0.95 * Math.sin(a), 'XZY'); }
+    for (let i = 0; i < 2; i++) { const m = mists[i]; m.visible = mistOn && !indoor; m.position.x = cam.position.x; m.position.z = cam.position.z; m.material.uniforms.off.value.set(tickT * (i ? -0.006 : 0.01), tickT * 0.004); }
     skyline.position.set(cam.position.x, 10, cam.position.z); smokes.position.set(cam.position.x, 0, cam.position.z);
     for (const sm of smokes.children) if (sm.userData.smoke) sm.material.map.offset.y -= dt * 0.02;
     if (!rain.visible) return;
@@ -949,7 +977,7 @@ export function buildWorld(scene) {
     ground.material = hi ? groundP : groundL; groundP.bumpMap = key === 'high' ? groundP.userData.bm : null; groundP.needsUpdate = true;
     const bumpOn = key === 'high'; for (const k in mats) { const m = mats[k], b = m.userData.bump; if (b) { const want = bumpOn ? b[0] : null; if (m.bumpMap !== want) { m.bumpMap = want; m.bumpScale = b[1]; m.needsUpdate = true; } } }
     mats.puddle.envMap = hi ? envCube : null; mats.puddle.needsUpdate = true;
-    smokes.visible = hi; pools.visible = hi; skyline.visible = hi; if (cones.material.map !== (hi ? coneTex : null)) { cones.material.map = hi ? coneTex : null; cones.material.needsUpdate = true; } rainOk = hi; for (const m of spills) m.userData.q = hi; rainN = key === 'high' ? RAIN_MAX : 700; setRain(rainOn);
+    mistOn = hi; smokes.visible = hi; pools.visible = hi; skyline.visible = hi; if (cones.material.map !== (hi ? coneTex : null)) { cones.material.map = hi ? coneTex : null; cones.material.needsUpdate = true; } rainOk = hi; for (const m of spills) m.userData.q = hi; rainN = key === 'high' ? RAIN_MAX : 700; setRain(rainOn);
   };
   // pavement height (sidewalk slabs are 0.1 m above the asphalt)
   function groundY(x, z) {
