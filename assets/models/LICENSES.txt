@@ -51,3 +51,25 @@ Code vendored alongside (lib/):
 Not used / deliberately avoided:
   three.js examples Xbot.glb, Michelle.glb, Soldier.glb: these characters/animations come
   from Mixamo, which does not allow redistributing the raw assets. Not vendored.
+
+----------------------------------------------------------------------------
+v0.6 heroine (星璃) base — downloaded 2026-10-08 from itch.io (free "Standard" tiers),
+processed with gltf-transform 4.5 (unused attributes/clips/tracks pruned, resampled,
+textures re-encoded as JPEG; eye texture hue-shifted to purple, hair/brow textures
+desaturated for runtime tinting, light-skin base colour variant used).
+
+ubc_female.glb, ubc_hair_long.glb
+  Source:  "Universal Base Characters" [Standard] by Quaternius
+           https://quaternius.itch.io/universal-base-characters
+           (Superhero_Female_FullBody.gltf + Eyebrows; Hairstyles/Rigged to Head Bone/Hair_Long.gltf)
+  Author:  Quaternius (https://quaternius.com) — "Models by @Quaternius"
+  License: CC0 1.0 Universal (License_Standard.txt in the pack)
+           https://creativecommons.org/publicdomain/zero/1.0/
+
+ual_hero.glb
+  Source:  "Universal Animation Library" [Standard] by Quaternius
+           https://quaternius.itch.io/universal-animation-library
+           (UAL1_Standard.glb, Unreal-Godot skeleton = same bone names as the base characters;
+           only 14 clips kept, mannequin mesh removed)
+  Author:  Quaternius
+  License: CC0 1.0 Universal (License.txt in the pack)

@@ -79,3 +79,15 @@ Durations in seconds.
 5. Considered, not vendored: Quaternius "Lis" (zombie-kit survivor, pistol, same rig as zombies, but no roll — https://poly.pizza/m/gjuwleUT1U, CC0);
    Quaternius Universal Animation Library free subset (CC0 mannequin with 46 clips incl. Pistol_Aim/Roll/Hit_Chest, GitHub mirror J-Ponzo/gltf-universal-animation-library, 2.9 MB raw, no zombie clips);
    three.js Xbot/Michelle/Soldier (Mixamo-derived → not redistributable).
+
+## v0.6 heroine: Universal Base Characters + Universal Animation Library (CC0, Quaternius)
+| File | Contents | Size |
+|---|---|---|
+| `ubc_female.glb` | Superhero_Female body (7.4k verts, 65-joint UE-style skeleton: root/pelvis/spine_01-03/neck_01/Head/clavicle/upperarm/lowerarm/hand/fingers/thigh/calf/foot/ball), Eyes, Eyebrows; 2048 base colour (light skin), 1024 normal | ~0.9 MB |
+| `ubc_hair_long.glb` | Hair_Long, skinned to the same skeleton (Head only), greyscale albedo + normal | ~0.56 MB |
+| `ual_hero.glb` | clips only: Idle_Loop 2.50, Walk_Loop 1.33, Jog_Fwd_Loop 0.93, Sprint_Loop 0.67, Sword_Attack 1.53, Sword_Idle 1.67, Roll 1.47, Death01 2.40, Hit_Chest 0.33, Hit_Head 0.43, Pistol_Idle_Loop 1.67, Pistol_Aim_Neutral 0.17, Pistol_Shoot 0.63, Pistol_Reload 1.67 | ~0.24 MB |
+
+Game alias → UAL clip: Idle←Idle_Loop, Idle_Gun←Pistol_Idle_Loop, Walk←Walk_Loop, Run←Jog_Fwd_Loop, Sword_Slash←Sword_Attack,
+Roll←Roll, Death←Death01, HitRecieve←Hit_Chest, HitRecieve_2←Hit_Head, Interact←Pistol_Reload, Gun_Shoot←Pistol_Shoot,
+Idle_Gun_Pointing←Pistol_Aim_Neutral, Run_Shoot←Jog legs + Pistol_Aim_Neutral upper body (built at runtime).
+The v0.5 rig (`female_hooded.glb`) stays available with `?hero=old`.
