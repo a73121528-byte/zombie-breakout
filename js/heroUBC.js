@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { loadHeroGLB, boneMount, colored, mergedMesh, HC } from './heroRig.js?v=20261008a';
+import { loadHeroGLB, boneMount, colored, mergedMesh, HC } from './heroRig.js?v=20261008b';
 
 // ============================================================================
 // 星璃 v0.6b on Quaternius "Universal Base Characters" (Superhero_Female, CC0) animated with the

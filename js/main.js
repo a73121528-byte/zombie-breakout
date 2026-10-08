@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { Sfx } from './audio.js?v=20261008a';
-import { buildWorld } from './world.js?v=20261008a';
-import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261008a';
-import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261008a';
-import { loadUBC, buildUBCHeroine } from './heroUBC.js?v=20261008a';
-import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261008a';
-import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261008a';
+import { Sfx } from './audio.js?v=20261008b';
+import { buildWorld } from './world.js?v=20261008b';
+import { buildHeroine, buildZombie, buildBoss, buildGuns, getGlowTex, setCharDetail, applyCharBump, buildMachete, starGeo, glowSprite } from './characters.js?v=20261008b';
+import { loadHeroGLB, buildRiggedHeroine, HERO_GLB, ikTwoBone } from './heroRig.js?v=20261008b';
+import { loadUBC, buildUBCHeroine } from './heroUBC.js?v=20261008b';
+import { loadZombieModels, initZombieRig, buildRiggedZombie, zombieRigReady, setZombieQuality, applyZombieDetail, disposeRiggedZombie, RIG_TYPES } from './zombieRig.js?v=20261008b';
+import { WEAPONS, WEAPON_ORDER, PARTS, PART_KEYS, GUN_PART_KEYS, gunStats, meleeMul } from './weapons.js?v=20261008b';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
 
 const $ = id => document.getElementById(id);
@@ -1179,7 +1179,7 @@ function updateCamera(dt) {
   CAM.pivot.lerp(target, damp(14, dt));
   const cp = Math.cos(CAM.pitch), sp = Math.sin(CAM.pitch);
   const dir = new THREE.Vector3(-fx * cp, sp, -fz * cp);
-  const hit = rayCast(CAM.pivot, dir, wantDist);
+  const hit = Math.min(rayCast(CAM.pivot, dir, wantDist), W.camRay(CAM.pivot, dir, wantDist));
   const dist = Math.max(0.9, hit - 0.25);
   CAM.curDist = dist < CAM.curDist ? dist : lerp(CAM.curDist, dist, damp(4, dt));
   camera.position.copy(CAM.pivot).addScaledVector(dir, CAM.curDist + INV.camKick * 0.12);
@@ -1632,7 +1632,7 @@ let stragT = 0;
 function updateWaves(dt) {
   G.phaseT += dt;
   if ((stragT -= dt) <= 0) { stragT = 2; relocateStragglers(); }
-  if (G.phase === 'boss' && G.boss && G.boss.alive && G.boss.dormant && (G.bossHintT = (G.bossHintT || 0) - dt) <= 0) { G.bossHintT = 14; toast('首領在北方外環檢查哨', '循著地圖上的黃點前往決戰', '#ffd84a', '⚠'); }
+  if (G.phase === 'boss' && G.boss && G.boss.alive && G.boss.dormant && (G.bossHintT = (G.bossHintT || 0) - dt) <= 0) { G.bossHintT = 20; toast('首領在北方外環檢查哨', '跟著地上的金色箭頭與地圖上的黃線前進', '#ffd84a', '⚠'); }
   if (G.phase === 'fight') {
     G.spawnT -= dt;
     const alive = zombies.filter(z => z.alive).length;
@@ -1708,6 +1708,54 @@ function mapDots(c, scaleDot) {
   for (const o of orbs) { c.fillStyle = '#ff8090'; c.fillRect(o.m.position.x - .7 * scaleDot, o.m.position.z - .7 * scaleDot, 1.4 * scaleDot, 1.4 * scaleDot); }
   for (const p of pickups) { c.fillStyle = p.kind === 'ammo' ? '#ffc840' : (PARTS[p.key].color); c.fillRect(p.g.position.x - .8 * scaleDot, p.g.position.z - .8 * scaleDot, 1.6 * scaleDot, 1.6 * scaleDot); }
 }
+// ---- boss guide: route field toward the checkpoint (W.routeTo / routeAhead), golden ground chevron at the heroine's
+// feet, a compass chip under the boss bar (direction + metres) and a dotted route on the minimap
+const guide = { on: false, pts: [], tgt: null, dist: 0 };
+const guideEl = document.createElement('div'); guideEl.id = 'bossGuide'; guideEl.className = 'hidden';
+guideEl.innerHTML = '<svg viewBox="-12 -12 24 24" width="26" height="26"><path d="M0,-10 L8,6 L0,2 L-8,6 Z" fill="#ffd84a" stroke="#000" stroke-width="1.2"/></svg><span></span>';
+$('hud').appendChild(guideEl);
+const guideSvg = guideEl.querySelector('svg'), guideTxt = guideEl.querySelector('span');
+const guideArrow = (() => {
+  const sh = new THREE.Shape([[0, 0.75], [0.55, -0.1], [0.22, -0.1], [0.22, -0.6], [-0.22, -0.6], [-0.22, -0.1], [-0.55, -0.1]].map(p => new THREE.Vector2(p[0], p[1])));
+  const g = new THREE.ShapeGeometry(sh); g.rotateX(-Math.PI / 2); g.scale(1, 1, -1); // tip toward +z
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffc83a, transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }));
+  m.renderOrder = 3; m.visible = false; scene.add(m); return m;
+})();
+const guideNear = [], guideTgt = { x: 0, z: 0 };
+function clearLine(x0, z0, x1, z1, rad) { const d = Math.hypot(x1 - x0, z1 - z0), n = Math.ceil(d / 0.35); for (let i = 1; i <= n; i++) { const t = i / n; if (W.inside(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, rad)) return false; } return true; }
+function updateGuide(dt) {
+  const b = G.boss;
+  const on = G.mode === 'play' && G.phase === 'boss' && b && b.alive && P.state !== 'dead' && (b.dormant || Math.hypot(b.pos.x - P.pos.x, b.pos.z - P.pos.z) > 40);
+  guide.on = !!on;
+  if (!on) { guideArrow.visible = false; guideEl.classList.add('hidden'); guide.pts.length = 0; return; }
+  W.routeTo(W.bossSpot[0], W.bossSpot[1]);
+  let tgt = null, dist = 0;
+  if (W.districtAt(P.pos.x, P.pos.z) === 'station') { // underground platform: back up the stairs first
+    const pt = W.portals[1]; tgt = { x: (pt.x0 + pt.x1) / 2, z: (pt.z0 + pt.z1) / 2 }; dist = Math.hypot(tgt.x - P.pos.x, tgt.z - P.pos.z) + 260; guide.pts.length = 0; guide.pts.push(tgt.x, tgt.z);
+  } else {
+    const r = W.routeAhead(P.pos.x, P.pos.z, 160, guide.pts);
+    if (r) {
+      // steer at the farthest route point (within ~14 m) that is in clear line of sight for the heroine's radius
+      const near = W.routeAhead(P.pos.x, P.pos.z, 14, guideNear, 1);
+      tgt = guideNear.length >= 4 ? (guideTgt.x = guideNear[2], guideTgt.z = guideNear[3], guideTgt) : near;
+      for (let i = guideNear.length - 2; i >= 0; i -= 2) { if (clearLine(P.pos.x, P.pos.z, guideNear[i], guideNear[i + 1], 0.36)) { tgt = guideTgt; guideTgt.x = guideNear[i]; guideTgt.z = guideNear[i + 1]; break; } }
+      if (!tgt) tgt = r; dist = r.dist;
+    }
+    else { tgt = { x: b.pos.x, z: b.pos.z }; dist = Math.hypot(tgt.x - P.pos.x, tgt.z - P.pos.z); }
+  }
+  guide.tgt = tgt; guide.dist = dist;
+  const dx = tgt.x - P.pos.x, dz = tgt.z - P.pos.z, bear = Math.atan2(dx, dz);
+  // ground chevron 1.7 m ahead along the route, gently pulsing
+  guideArrow.visible = Math.hypot(dx, dz) > 0.3;
+  guideArrow.position.set(P.pos.x + Math.sin(bear) * 1.7, (P.gy || 0) + 0.07, P.pos.z + Math.cos(bear) * 1.7);
+  guideArrow.rotation.y = bear; guideArrow.material.opacity = 0.55 + Math.sin(G.time * 5) * 0.25;
+  // compass chip: arrow relative to the camera's forward
+  const rel = bear - (CAM.yaw + Math.PI);
+  guideSvg.style.transform = `rotate(${(-rel * 180 / Math.PI).toFixed(1)}deg)`;
+  const txt = '首領 ' + Math.round(dist) + 'm';
+  if (guideTxt.textContent !== txt) guideTxt.textContent = txt;
+  guideEl.classList.remove('hidden');
+}
 function drawMinimap() {
   const c = mm, S = 120, sc = 1.6, R = S / 2;
   c.setTransform(1, 0, 0, 1, 0, 0);
@@ -1715,6 +1763,7 @@ function drawMinimap() {
   c.save();
   c.translate(R, R); c.rotate(CAM.yaw); c.scale(sc, sc); c.translate(-P.pos.x, -P.pos.z);
   c.drawImage(mapLayer, MAP_CX - MAP_R, MAP_CZ - MAP_R, MAP_R * 2, MAP_R * 2);
+  if (guide.on && guide.pts.length >= 2) { c.strokeStyle = 'rgba(255,216,74,.9)'; c.lineWidth = 1.4; c.setLineDash([2.5, 2]); c.beginPath(); c.moveTo(P.pos.x, P.pos.z); for (let i = 0; i < guide.pts.length; i += 2) c.lineTo(guide.pts[i], guide.pts[i + 1]); c.stroke(); c.setLineDash([]); }
   mapDots(c, 1);
   c.translate(P.pos.x, P.pos.z); c.rotate(-P.facing);
   c.fillStyle = '#fff'; c.beginPath(); c.moveTo(0, 2.6); c.lineTo(1.6, -1.6); c.lineTo(0, -0.6); c.lineTo(-1.6, -1.6); c.closePath(); c.fill();
@@ -1854,7 +1903,10 @@ function updateFx(dt) {
   W.sky.position.copy(camera.position);
   W.tick(dt, camera);
   { const dx = P.pos.x - camera.position.x, dz = P.pos.z - camera.position.z, L = Math.hypot(dx, dz) || 1; rimLight.target.position.set(P.pos.x, 0.8, P.pos.z); rimLight.position.set(P.pos.x + dx / L * 10, 7, P.pos.z + dz / L * 10); }
-  fillLight.position.set(camera.position.x, camera.position.y + 1.2, camera.position.z);
+  // fill light: between the heroine and the camera, at least ~2.6 m above her ground so it never sits right on top of a
+  // nearby surface (camera over an awning / against a wall used to blow that surface out into a flat lavender-blue slab)
+  fillLight.position.set(P.pos.x + (camera.position.x - P.pos.x) * 0.45, Math.max(camera.position.y + 0.6, (P.gy || 0) + 2.6), P.pos.z + (camera.position.z - P.pos.z) * 0.45);
+  { const inr = W.interiorAt(P.pos.x, P.pos.z); if (inr) fillLight.position.y = Math.min(fillLight.position.y, inr.ceil - 0.4); }
   // shadow camera follows the heroine
   if (Q.shadow) { const tx = (moon.shadow.camera.right * 2) / Q.shadow, sx = Math.round(P.pos.x / tx) * tx, sz = Math.round(P.pos.z / tx) * tx; moon.target.position.set(sx, 0, sz); moon.position.set(sx - 20, 30, sz + 10); }
   // indoors: no moonlight, dimmer sky bounce, warmer fill (sealed interiors read as enclosed spaces)
@@ -2033,6 +2085,12 @@ function frame() {
     else if (avg < 1 / 58 && pixelRatio < Math.min(window.devicePixelRatio || 1, Q.prCap)) { pixelRatio = Math.min(Q.prCap, pixelRatio + 0.25); renderer.setPixelRatio(pixelRatio); onResize(); }
     perfAcc = perfFrames = perfCheckT = 0;
   }
+  if (simOnly) return; // headless route tests drive the simulation with fixed 1/60 s steps (__zb.sim)
+  simulate(dt);
+  renderer.render(scene, camera);
+}
+let simOnly = false;
+function simulate(dt) {
   if (hitStop > 0) { hitStop -= dt; dt *= 0.08; }
   G.time += dt;
   if (G.mode === 'play' || G.mode === 'dead' || G.mode === 'win') {
@@ -2048,9 +2106,9 @@ function frame() {
     updateCamera(dt);
     updateFx(dt);
     updateHud(dt);
+    updateGuide(dt);
     if (G.mode === 'play' && P.state === 'dead' && P.t > 1.8) endScreen(false);
   }
-  renderer.render(scene, camera);
 }
 // warm-up: compile shaders with representative objects so first spawn doesn't stutter
 resetInventory();
@@ -2104,7 +2162,7 @@ function setLoad(k, label) {
   let hK = 0, zK = FORCE_PROC_Z ? 1 : 0;
   const prog = () => { curK = 0.1 + (hK * 0.55 + zK * 0.45) * 0.8; setLoad(Math.max(fake, curK)); };
   initZombieRig({ glowSprite });
-  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261008a', k => { zK = k; prog(); })
+  const zLoad = FORCE_PROC_Z ? Promise.resolve(null) : loadZombieModels('20261008b', k => { zK = k; prog(); })
     .catch(e => { console.warn('rigged zombies unavailable, procedural fallback:', e && e.message ? e.message : e); return null; });
   try {
     if (/[?&]hero=proc/.test(location.search)) throw new Error('procedural forced by URL');
@@ -2113,13 +2171,13 @@ function setLoad(k, label) {
     // v0.6b: Universal Base Characters heroine (default); ?hero=old keeps the v0.5 Quaternius rig
     if (!/[?&]hero=old/.test(location.search)) {
       try {
-        const G3 = await loadUBC('20261008a', k => { hK = k; prog(); });
+        const G3 = await loadUBC('20261008b', k => { hK = k; prog(); });
         setLoad(0.9, '組裝星璃…');
         R = buildUBCHeroine(G3, helpers); window.__heroMode = 'ubc';
       } catch (e) { console.warn('UBC heroine unavailable, falling back to the v0.5 rig:', e && e.message ? e.message : e); R = null; }
     }
     if (!R) {
-      const gltf = await loadHeroGLB(HERO_GLB + '?v=20261008a', k => { hK = k; prog(); });
+      const gltf = await loadHeroGLB(HERO_GLB + '?v=20261008b', k => { hK = k; prog(); });
       setLoad(0.9, '組裝星璃…');
       R = buildRiggedHeroine(gltf, helpers); window.__heroMode = 'rigged';
     }
@@ -2139,4 +2197,4 @@ function setLoad(k, label) {
 frame();
 
 // debug/test hook
-window.__zb = { scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, get hero() { return hero; }, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; for (const z of zombies) z.lift.visible = true; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };
+window.__zb = { sim: (n, dt = 1 / 60) => { for (let i = 0; i < n; i++) simulate(dt); }, simOnly(v) { simOnly = !!v; clock.getDelta(); }, guide, scene, acquireTarget, bulletRay, rayCast, W, G, P, INV, zombies, pickups, spawnZombie, spawnAtEdge, damagePlayer, damageZombie, killZombie, startWave, unlockWeapon, switchWeapon, equipPart, dropPickup, applyQuality, CAM, FPS, get hero() { return hero; }, camera, renderer, pauseGame, resumeGame, get pixelRatio() { return pixelRatio; }, get flashT() { return flashT; }, freeze() { G.mode = 'paused'; for (const z of zombies) z.lift.visible = true; }, unfreeze() { G.mode = 'play'; clock.getDelta(); }, tryFire, renderUpgradePanel, get Q() { return Q; }, AUTO_Q };

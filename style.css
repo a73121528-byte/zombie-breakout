@@ -191,3 +191,6 @@ body[data-q=mid] #grain,body[data-q=high] #grain{display:block}
 #bigMap{height:min(82vh,82vw);width:min(82vh,82vw);border:2px solid rgba(200,190,190,.5);border-radius:10px;box-shadow:0 0 30px rgba(0,0,0,.9)}
 .bmLegend{margin-top:6px;font-size:11px;color:#ccc}
 .bmLegend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 8px}
+
+#bossGuide{position:absolute;left:50%;top:92px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 10px 3px 6px;border-radius:14px;background:rgba(12,8,14,.72);border:1px solid rgba(255,216,74,.6);color:#ffd84a;font-size:13px;font-weight:700;letter-spacing:1px;text-shadow:0 0 4px #000;pointer-events:none}
+#bossGuide svg{transition:transform .12s linear;filter:drop-shadow(0 0 3px rgba(255,200,60,.7))}

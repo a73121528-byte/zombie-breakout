@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
-import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261008a';
-import { buildDistricts, AREAS, INTERIORS, STAIRS, PORTALS, HOLES, BOSS_SPOT } from './districts.js?v=20261008a';
+import { buildCar, makePlateAtlas, plateUV } from './cars.js?v=20261008b';
+import { buildDistricts, AREAS, INTERIORS, STAIRS, PORTALS, HOLES, BOSS_SPOT } from './districts.js?v=20261008b';
 
 // seeded rng
 let seed = 1337;
@@ -42,6 +42,7 @@ export function buildWorld(scene) {
   const camPos = { x: 0, z: 0 };
   const colliders = [];   // OBB {x,z,hw,hd,c,s,h, minX,maxX,minZ,maxZ}
   const mapRects = [];    // minimap {x,z,w,d,rot,kind}
+  const camBlock = [];    // elevated slabs the follow camera must not pass through (shop awnings): {x,z,c,s,hw,hd,y0,y1}
   const buckets = new Map();
   const mats = {};
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _v = new THREE.Vector3(), _s = new THREE.Vector3();
@@ -406,6 +407,7 @@ export function buildWorld(scene) {
         if (rnd() < 0.45) {
           const ax = f[0] === 'x' ? x + sgn * (w / 2 + 0.7) : px, az = f[0] === 'x' ? pz : z + sgn * (d / 2 + 0.7);
           add(box1, rnd() < .5 ? 'awning' : 'awning2', ax, gf - 1.05, az, ry, -0.35, 0, 3.0, 0.05, 1.5);
+          camBlock.push({ x: ax, z: az, c: Math.cos(ry), s: Math.sin(ry), hw: 1.55, hd: 0.8, y0: gf - 1.4, y1: gf - 0.7 });
         }
         for (let fl = 0; fl < Math.min(4, (h - gf) / 3 | 0); fl++) {
           if (rnd() < 0.5) continue;
@@ -665,7 +667,7 @@ export function buildWorld(scene) {
     }
     for (const [px, pz, ry] of [[18.5, -21.5, 0], [18.5, -34.5, PI], [12, -28, PI / 2]]) { add(box1, 'wood', px, 0.45, pz, ry, 0, 0, 1.8, 0.08, 0.5); add(box1, 'metal', px, 0.22, pz, ry, 0, 0, 1.6, 0.44, 0.08); }
     for (let i = 0; i < 40; i++) add(plane, 'leaf', rr(10, 27), 0.11, rr(-46, -10), rr(0, 6), -PI / 2, 0, 0.18, 0.12, 1);
-    add(tiledBox(2.6, 2.4, 2, 4), 'shop0', 25.5, 1.2, -36); add(box1, 'awning', 25.5, 2.55, -36, 0, 0, 0, 3, 0.1, 2.4); addCollider(25.5, -36, 2.6, 2, 0, 2.4); mapRects.push({ x: 25.5, z: -36, w: 2.6, d: 2, rot: 0, kind: 'b' });
+    add(tiledBox(2.6, 2.4, 2, 4), 'shop0', 25.5, 1.2, -36); add(box1, 'awning', 25.5, 2.55, -36, 0, 0, 0, 3, 0.1, 2.4); camBlock.push({ x: 25.5, z: -36, c: 1, s: 0, hw: 1.55, hd: 1.25, y0: 2.4, y1: 2.7 }); addCollider(25.5, -36, 2.6, 2, 0, 2.4); mapRects.push({ x: 25.5, z: -36, w: 2.6, d: 2, rot: 0, kind: 'b' });
     for (let row = 0; row < 3; row++) {
       const pz = -40 + row * 11;
       for (let i = 0; i <= 6; i++) add(flat, 'line', 30.5 + i * 2.6, 0.105, pz, 0, 0, 0, 0.12, 1, 5);
@@ -993,8 +995,17 @@ export function buildWorld(scene) {
   function districtAt(x, z) { const a = inArea(x, z); if (!a) return 'downtown'; if (a.k === 'hospital' && z > 9) return 'garage'; return a.k; }
   function interiorAt(x, z) { for (const r of INTERIORS) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return r; return null; }
   function portalAt(x, z) { for (const p of PORTALS) if (x > p.x0 && x < p.x1 && z > p.z0 && z < p.z1) return p; return null; }
+  // seams where two districts share an edge: walkable strips so the 0.25 m edge padding of each area does not leave a
+  // dead band between them (at 60 fps a 0.1 m step was snapped back every frame -> nobody could leave downtown)
+  const SEAMS = [];
+  for (const a of AREAS) for (const b of AREAS) {
+    if (a === b) continue;
+    if (a.z0 === b.z1) { const x0 = Math.max(a.x0, b.x0) + 0.25, x1 = Math.min(a.x1, b.x1) - 0.25; if (x1 > x0) SEAMS.push({ x0, x1, z0: a.z0 - 0.45, z1: a.z0 + 0.45 }); }
+    if (a.x0 === b.x1) { const z0 = Math.max(a.z0, b.z0) + 0.25, z1 = Math.min(a.z1, b.z1) - 0.25; if (z1 > z0) SEAMS.push({ x0: a.x0 - 0.45, x1: a.x0 + 0.45, z0, z1 }); }
+  }
+  const inSeam = (x, z) => { for (const r of SEAMS) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true; return false; };
   function clampXZ(p) {
-    if (inArea(p.x, p.z, 0.25)) return p;
+    if (inArea(p.x, p.z, 0.25) || inSeam(p.x, p.z)) return p;
     let best = null, bd = 1e9;
     for (const a of AREAS) { const x = Math.max(a.x0 + 0.3, Math.min(a.x1 - 0.3, p.x)), z = Math.max(a.z0 + 0.3, Math.min(a.z1 - 0.3, p.z)), d = (x - p.x) ** 2 + (z - p.z) ** 2; if (d < bd) { bd = d; best = [x, z]; } }
     p.x = best[0]; p.z = best[1]; return p;
@@ -1053,6 +1064,23 @@ export function buildWorld(scene) {
     }
     return best;
   };
+  // follow-camera ray against the elevated awning slabs (same slab test, y0..y1)
+  const camRay = (o, d, len) => {
+    let best = len;
+    for (const c of camBlock) {
+      const dx = o.x - c.x, dz = o.z - c.z; if (dx * dx + dz * dz > (len + 2) * (len + 2)) continue;
+      const ox = dx * c.c - dz * c.s, oz = dx * c.s + dz * c.c, vx = d.x * c.c - d.z * c.s, vz = d.x * c.s + d.z * c.c;
+      let tmin = 0, tmax = best, ok = true;
+      for (let k = 0; k < 3 && ok; k++) {
+        const oo = k === 0 ? ox : k === 1 ? o.y : oz, dd = k === 0 ? vx : k === 1 ? d.y : vz;
+        const mn = k === 0 ? -c.hw : k === 1 ? c.y0 : -c.hd, mx = k === 0 ? c.hw : k === 1 ? c.y1 : c.hd;
+        if (Math.abs(dd) < 1e-7) { if (oo < mn || oo > mx) ok = false; }
+        else { let t1 = (mn - oo) / dd, t2 = (mx - oo) / dd; if (t1 > t2) { const tt = t1; t1 = t2; t2 = tt; } if (t1 > tmin) tmin = t1; if (t2 < tmax) tmax = t2; if (tmin > tmax) ok = false; }
+      }
+      if (ok && tmin < best) best = tmin;
+    }
+    return best;
+  };
 
   // ---------------------------------------------------------------- navigation flow field (1 m grid, BFS from the player)
   // 1 m grid over every district (i = x + NO, j = z + NOZ); the BFS only expands within FLOW_R cells of the player
@@ -1065,6 +1093,44 @@ export function buildWorld(scene) {
   const cellOf = (x, z) => { const i = Math.floor(x + NO), j = Math.floor(z + NOZ); return (i < 0 || j < 0 || i >= NN || j >= NN) ? -1 : i * NN + j; };
   let flowTouched = [];
   const NB = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  // ---- static route field toward the boss (BFS over the whole nav grid, built once per boss fight)
+  let routeD = null, routeKey = '';
+  const routeTo = (tx, tz) => {
+    const key = tx + ',' + tz; if (routeKey === key) return; routeKey = key;
+    routeD = new Int32Array(NN * NN).fill(-1);
+    let s0 = cellOf(tx, tz); if (s0 < 0) return;
+    if (blocked[s0]) { // nearest open cell
+      let best = -1, bd = 1e9; const ti = Math.floor(s0 / NN), tj = s0 % NN;
+      for (let di = -6; di <= 6; di++) for (let dj = -6; dj <= 6; dj++) { const k = (ti + di) * NN + tj + dj; if (k >= 0 && k < NN * NN && !blocked[k] && di * di + dj * dj < bd) { bd = di * di + dj * dj; best = k; } }
+      if (best < 0) return; s0 = best;
+    }
+    let h = 0, t = 0; queue[t++] = s0; routeD[s0] = 0;
+    while (h < t) {
+      const c = queue[h++], ci = Math.floor(c / NN), cj = c % NN, cd = routeD[c];
+      for (let n = 0; n < 4; n++) { const ni = ci + NB[n][0], nj = cj + NB[n][1]; if (ni < 0 || nj < 0 || ni >= NN || nj >= NN) continue; const k = ni * NN + nj; if (routeD[k] >= 0 || blocked[k]) continue; routeD[k] = cd + 1; queue[t++] = k; }
+    }
+  };
+  // follow the route field `steps` cells from (px,pz); returns the look-ahead point + remaining distance (m), or null
+  const routeAhead = (px, pz, steps, out, every = 4) => {
+    if (!routeD) return null;
+    let c = cellOf(px, pz); if (c < 0) return null;
+    if (routeD[c] < 0) { // standing on a blocked / unreached cell (e.g. against a wall): best reachable neighbour
+      let best = -1, bd = 1e9; const ci = Math.floor(c / NN), cj = c % NN;
+      for (let di = -3; di <= 3; di++) for (let dj = -3; dj <= 3; dj++) { const k = (ci + di) * NN + cj + dj; if (k >= 0 && k < NN * NN && routeD[k] >= 0 && routeD[k] + Math.abs(di) + Math.abs(dj) < bd) { bd = routeD[k] + Math.abs(di) + Math.abs(dj); best = k; } }
+      if (best < 0) return null; c = best;
+    }
+    const total = routeD[c];
+    const pts = out ? (out.length = 0, out) : null;
+    for (let s = 0; s < steps && routeD[c] > 0; s++) {
+      const ci = Math.floor(c / NN), cj = c % NN; let nxt = -1, nd = routeD[c];
+      for (let n = 0; n < 8; n++) { const ni = ci + NB[n][0], nj = cj + NB[n][1]; const k = ni * NN + nj; if (ni < 0 || nj < 0 || ni >= NN || nj >= NN || routeD[k] < 0) continue;
+        if (n >= 4 && (blocked[ci * NN + nj] || blocked[ni * NN + cj])) continue; // no corner cutting
+        if (routeD[k] < nd) { nd = routeD[k]; nxt = k; } }
+      if (nxt < 0) break; c = nxt;
+      if (pts && s % every === every - 1) pts.push(Math.floor(c / NN) - NO + 0.5, c % NN - NOZ + 0.5);
+    }
+    return { x: Math.floor(c / NN) - NO + 0.5, z: c % NN - NOZ + 0.5, dist: total };
+  };
   const updateFlow = (px, pz) => {
     for (const k of flowTouched) dist[k] = -1; flowTouched = [];
     let s = cellOf(px, pz); if (s < 0) return;
@@ -1108,7 +1174,7 @@ export function buildWorld(scene) {
 
   scene.traverse(o => { const m = o.material; if (m && !Array.isArray(m) && m.blending === THREE.AdditiveBlending) m.toneMapped = false; }); // glows keep their authored colour under ACES
   scanGlow();
-  return { areas: AREAS, interiors: INTERIORS, portals: PORTALS, bossSpot: BOSS_SPOT, districtAt, interiorAt, setIndoor, inArea, clampXZ, portalAt, beams: DIST.beams, colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
+  return { camRay, camBlock, routeTo, routeAhead, areas: AREAS, interiors: INTERIORS, portals: PORTALS, bossSpot: BOSS_SPOT, districtAt, interiorAt, setIndoor, inArea, clampXZ, portalAt, beams: DIST.beams, colliders, mapRects, fires, spawnPoints, sky, bounds: BOUND, lamps, setLamp, lampsCommit, neons, ground, splat, sirens: { r: mats.sirenR, b: mats.sirenB }, cull, resolveCircle, inside, rayCast, updateFlow, flowDir, flowDist, carInfo, buildings, groundY, setQuality, setRain, tick, rain, skyline, roads: ROADS, roadHalf: RH, stats: { chunks: chunkMeshes.length, details: detailMeshes.length, colliders: colliders.length, cars: carInfo.length } };
 }
 
 // blood splatter texture (white, tinted by material colour)

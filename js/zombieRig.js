@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/GLTFLoader.js';
 import { clone as skClone } from 'three/addons/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/BufferGeometryUtils.js';
-import { creaseNormals } from './heroRig.js?v=20261008a';
+import { creaseNormals } from './heroRig.js?v=20261008b';
 
 // ============================================================================
 // v0.5 step3: rigged zombies on Quaternius CC0 zombie_a.glb / zombie_chubby.glb.
